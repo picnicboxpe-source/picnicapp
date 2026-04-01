@@ -456,7 +456,7 @@ const firebaseConfig = {
   projectId: "picnicbox-app",
   storageBucket: "picnicbox-app.firebasestorage.app",
   messagingSenderId: "276566404456",
-  appId: "1:276566404456:web:9781757ba9ac082839badd"
+  appId: "1:276566404456:web:00dcae4222a658e039badd"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -550,7 +550,8 @@ window.saveOrder = async function(orderData) {
     await addDoc(collection(db, 'orders'), {
       ...orderData,
       createdAt: serverTimestamp(),
-      status: 'pendiente'
+      status: 'pendiente',
+      cerrado: false
     });
     return true;
   } catch(e) {
@@ -596,7 +597,7 @@ function render() {
   const today = dayKey(new Date());
   const todayCount = orders.filter(o => o.deliveryDate && dayKey(new Date(o.deliveryDate+'T12:00:00')) === today).length;
   const pending = orders.filter(o => o.status === 'pendiente').length;
-  const totalVentas = orders.filter(o=>o.status==='entregado').reduce((s,o) => s+(parseFloat(o.precio)||0), 0);
+  const totalVentas = orders.filter(o=>o.status==='entregado' && !o.cerrado).reduce((s,o) => s+(parseFloat(o.precio)||0), 0);
 
   el.innerHTML = `
     <div class="summary-bar">
@@ -681,7 +682,7 @@ function renderFinanzas() {
   const el = document.getElementById('main-content');
   if (!el) return;
   const today = dayKey(new Date());
-  const totalIngresos = orders.filter(o=>o.status==='entregado').reduce((s,o)=>s+(parseFloat(o.precio)||0),0);
+  const totalIngresos = orders.filter(o=>o.status==='entregado' && !o.cerrado).reduce((s,o)=>s+(parseFloat(o.precio)||0),0);
   const totalExp = expenses.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
   const expByDay = {};
   expenses.forEach(e=>{ if(!expByDay[e.date])expByDay[e.date]=[]; expByDay[e.date].push(e); });
@@ -706,6 +707,17 @@ function renderFinanzas() {
         <div class="sum-label" style="color:var(--lavender)">Utilidad ÷ 2 👥</div>
       </div>
     </div>
+
+    <div style="background:white;border:1.5px solid var(--sun);border-radius:var(--rr);padding:18px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+      <div>
+        <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--ink);margin-bottom:3px">Cerrar día</div>
+        <div style="font-size:12px;color:var(--ink3);line-height:1.5">Marca como cerrados todos los pedidos entregados.<br>Ya no contarán en el total de ingresos.</div>
+      </div>
+      <button onclick="cerrarDia()" style="flex-shrink:0;padding:10px 20px;background:var(--sun);color:white;border:none;border-radius:100px;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .2s" onmouseover="this.style.background='#c8880e'" onmouseout="this.style.background='var(--sun)'">
+        🌙 Cerrar día
+      </button>
+    </div>
+
     <div style="background:white;border:1px solid var(--border);border-radius:var(--rr);padding:18px;margin-bottom:20px">
       <div style="font-family:'Playfair Display',serif;font-size:15px;margin-bottom:14px">Agregar gasto</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
@@ -769,6 +781,26 @@ window.addExpense = async function() {
 window.deleteExpense = async function(id) {
   await window.removeExpense(id);
   showToast('Gasto eliminado');
+};
+
+window.cerrarDia = async function() {
+  const elegibles = orders.filter(o => o.status === 'entregado' && !o.cerrado);
+  if (elegibles.length === 0) {
+    showToast('No hay pedidos entregados por cerrar');
+    return;
+  }
+  const confirmar = confirm(
+    `¿Cerrar día? Se marcarán ${elegibles.length} pedido${elegibles.length !== 1 ? 's' : ''} entregado${elegibles.length !== 1 ? 's' : ''} como cerrados.\n\nYa no contarán en el total de ingresos.`
+  );
+  if (!confirmar) return;
+  try {
+    await Promise.all(
+      elegibles.map(o => updateDoc(doc(db, 'orders', o.id), { cerrado: true }))
+    );
+    showToast(`✅ Día cerrado — ${elegibles.length} pedido${elegibles.length !== 1 ? 's' : ''} cerrado${elegibles.length !== 1 ? 's' : ''}`);
+  } catch(e) {
+    showToast('Error al cerrar día: ' + e.message);
+  }
 };
 
 // ── TABS ──
