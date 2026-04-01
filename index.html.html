@@ -385,6 +385,10 @@ main { padding:20px; max-width:680px; margin:0 auto; }
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M4 6l3 3 3-3M2 11h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Importar WA
       </button>
+      <button onclick="verRuta()" style="display:flex;align-items:center;gap:6px;background:var(--sky);color:white;border:none;padding:9px 16px;border-radius:100px;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:background .2s" onmouseover="this.style.background='#2a6aaa'" onmouseout="this.style.background='var(--sky)'">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="5.5" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M7 14C7 14 2 9.5 2 5.5a5 5 0 0110 0C12 9.5 7 14 7 14z" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+        Ver ruta
+      </button>
       <button class="btn-logout" onclick="doLogout()">Salir</button>
     </div>
   </header>
@@ -801,6 +805,44 @@ window.cerrarDia = async function() {
   } catch(e) {
     showToast('Error al cerrar día: ' + e.message);
   }
+};
+
+// ── RUTA DE REPARTO ──
+window.verRuta = function() {
+  const ORIGEN = 'Av. General Mendiburu 935, Miraflores, Lima';
+  const MAX_PARADAS = 10;
+
+  // Pedidos del día actual, no entregados, no cerrados, con dirección
+  const today = dayKey(new Date());
+  const paraRuta = orders.filter(o => {
+    if (o.status === 'entregado') return false;
+    if (o.cerrado) return false;
+    if (!o.address) return false;
+    // Comparar fecha del pedido con hoy
+    if (!o.deliveryDate) return false;
+    const fechaPedido = typeof o.deliveryDate === 'string'
+      ? o.deliveryDate.slice(0, 10)
+      : dayKey(new Date(o.deliveryDate.toDate ? o.deliveryDate.toDate() : o.deliveryDate));
+    return fechaPedido === today;
+  });
+
+  if (paraRuta.length === 0) {
+    showToast('No hay pedidos de hoy pendientes con dirección');
+    return;
+  }
+
+  // Limitar a 10 paradas
+  const paradas = paraRuta.slice(0, MAX_PARADAS);
+  if (paraRuta.length > MAX_PARADAS) {
+    showToast(`Mostrando ${MAX_PARADAS} de ${paraRuta.length} pedidos`);
+  }
+
+  // Construir URL de Google Maps
+  const encode = str => encodeURIComponent(str.trim());
+  const segmentos = [encode(ORIGEN), ...paradas.map(o => encode(o.address))];
+  const url = 'https://www.google.com/maps/dir/' + segmentos.join('/');
+
+  window.open(url, '_blank');
 };
 
 // ── TABS ──
