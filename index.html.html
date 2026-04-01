@@ -472,6 +472,7 @@ let orders = [];
 let expenses = [];
 let currentTab = 'todos';
 let parsedDraft = null;
+let editandoId = null;   // ID del pedido en edición (null = modo creación)
 let unsubOrders = null;
 let unsubExpenses = null;
 
@@ -793,17 +794,49 @@ window.cerrarDia = async function() {
     showToast('No hay pedidos entregados por cerrar');
     return;
   }
+
+  // Calcular totales ANTES de cerrar
+  const cantidadPedidos = elegibles.length;
+  const totalCierre = elegibles.reduce((s, o) => s + (parseFloat(o.precio) || 0), 0);
+
   const confirmar = confirm(
-    `¿Cerrar día? Se marcarán ${elegibles.length} pedido${elegibles.length !== 1 ? 's' : ''} entregado${elegibles.length !== 1 ? 's' : ''} como cerrados.\n\nYa no contarán en el total de ingresos.`
+    `¿Cerrar día?\n\n` +
+    `Pedidos entregados: ${cantidadPedidos}\n` +
+    `Total: S/ ${totalCierre.toFixed(2)}\n\n` +
+    `Ya no contarán en el total de ingresos.`
   );
   if (!confirmar) return;
+
   try {
+    // 1. Guardar registro en colección "cierres"
+    await addDoc(collection(db, 'cierres'), {
+      fecha: serverTimestamp(),
+      cantidadPedidos,
+      total: totalCierre,
+      pedidosIds: elegibles.map(o => o.id)
+    });
+
+    // 2. Marcar pedidos como cerrados (lógica original intacta)
     await Promise.all(
       elegibles.map(o => updateDoc(doc(db, 'orders', o.id), { cerrado: true }))
     );
-    showToast(`✅ Día cerrado — ${elegibles.length} pedido${elegibles.length !== 1 ? 's' : ''} cerrado${elegibles.length !== 1 ? 's' : ''}`);
+
+    showToast(`✅ Día cerrado — ${cantidadPedidos} pedido${cantidadPedidos !== 1 ? 's' : ''} · S/ ${totalCierre.toFixed(2)}`);
   } catch(e) {
     showToast('Error al cerrar día: ' + e.message);
+  }
+};
+
+// ── HISTORIAL DE CIERRES ──
+window.verHistorialCierres = async function() {
+  try {
+    const { getDocs } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const q = query(collection(db, 'cierres'), orderBy('fecha', 'desc'));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    showToast('Error al leer historial: ' + e.message);
+    return [];
   }
 };
 
@@ -855,11 +888,17 @@ window.setTab = function(tab, el) {
 
 // ── IMPORT ──
 window.openImport = function() {
+  editandoId = null;
+  parsedDraft = null;
   document.getElementById('wa-input').value = '';
   document.getElementById('import-step-1').style.display = 'block';
   document.getElementById('import-step-2').style.display = 'none';
-  parsedDraft = null;
   document.getElementById('ov-import').classList.add('show');
+  // Restaurar título y subtítulo
+  const t = document.querySelector('#ov-import .sheet-title');
+  if (t) t.childNodes[0].textContent = 'Importar desde WhatsApp';
+  const s = document.querySelector('#ov-import .sheet-sub');
+  if (s) s.textContent = 'Pega el mensaje del cliente tal como llegó. El sistema lo interpreta y organiza.';
 };
 
 window.analyzeMessage = async function() {
@@ -1088,19 +1127,101 @@ window.backToInput = function() {
 window.confirmOrder = async function() {
   const btn = document.getElementById('btn-confirm-order');
   if (btn) { btn.disabled=true; btn.textContent='Guardando...'; }
+
   const orderData = {};
   document.querySelectorAll('[data-key]').forEach(inp => {
     const k = inp.dataset.key;
     const v = inp.value.trim();
     orderData[k] = v || null;
   });
-  const ok = await window.saveOrder(orderData);
-  if (ok) {
-    closeOverlay('ov-import');
-    showToast('✅ Pedido guardado en Firebase');
+
+  if (editandoId) {
+    // ── MODO EDICIÓN: actualizar documento existente ──
+    try {
+      await updateDoc(doc(db, 'orders', editandoId), orderData);
+      editandoId = null;
+      closeOverlay('ov-import');
+      showToast('✅ Pedido actualizado');
+    } catch(e) {
+      showToast('Error al actualizar: ' + e.message);
+      if (btn) { btn.disabled=false; btn.textContent='Guardar cambios'; }
+    }
   } else {
-    if (btn) { btn.disabled=false; btn.textContent='Guardar pedido'; }
+    // ── MODO CREACIÓN: flujo original intacto ──
+    const ok = await window.saveOrder(orderData);
+    if (ok) {
+      closeOverlay('ov-import');
+      showToast('✅ Pedido guardado en Firebase');
+    } else {
+      if (btn) { btn.disabled=false; btn.textContent='Guardar pedido'; }
+    }
   }
+};
+
+// ── EDITAR PEDIDO ──
+window.editarPedido = function(id) {
+  const o = orders.find(x => x.id === id);
+  if (!o) return;
+
+  // Cerrar detalle y abrir panel de import en modo edición
+  closeOverlay('ov-detail');
+  editandoId = id;
+  parsedDraft = null;
+
+  // Cambiar título y subtítulo del panel
+  const t = document.querySelector('#ov-import .sheet-title');
+  if (t) t.childNodes[0].textContent = 'Editar pedido';
+  const s = document.querySelector('#ov-import .sheet-sub');
+  if (s) s.textContent = 'Modifica los campos y guarda los cambios.';
+
+  // Ocultar paso 1 (textarea WA) y mostrar preview directo con datos del pedido
+  document.getElementById('wa-input').value = '';
+  document.getElementById('import-step-1').style.display = 'none';
+  document.getElementById('import-step-2').style.display = 'block';
+  document.getElementById('loading-wrap').style.display = 'none';
+  document.getElementById('preview-content').style.display = 'block';
+  document.getElementById('ov-import').classList.add('show');
+
+  // Mostrar el formulario prellenado con los datos actuales
+  const campos = ['clientName','phone','recipientName','recipientPhone',
+    'deliveryDate','timeRange','address','reference','product','precio','extras','cardMessage'];
+  const d = {};
+  campos.forEach(k => { d[k] = o[k] || null; });
+  d.confidence = 'high';
+  d.notes = null;
+
+  const pc = document.getElementById('preview-content');
+  pc.innerHTML = `
+    <div style="background:var(--sky-l);border-left:3px solid var(--sky);border-radius:0 8px 8px 0;padding:10px 14px;font-size:12.5px;color:#1A4A80;margin-bottom:14px;line-height:1.5">
+      ✏️ Editando pedido de <strong>${o.clientName||'cliente'}</strong>. Los cambios se guardarán en Firestore.
+    </div>
+    <div class="preview-box">
+      <div class="preview-header">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z" stroke="white" stroke-width="1.5" stroke-linejoin="round" fill="none"/></svg>
+        <span class="preview-header-text">Editar campos — todos los cambios son opcionales</span>
+      </div>
+      <div class="preview-grid">
+        ${pf('clientName','👤 Quien compra / envía',d.clientName,true)}
+        ${pf('phone','📱 Tel. quien compra',d.phone)}
+        ${pf('recipientName','🎁 Destinatario',d.recipientName,true)}
+        ${pf('recipientPhone','📲 Tel. quien recibe',d.recipientPhone)}
+        ${pf('deliveryDate','📅 Fecha entrega',d.deliveryDate,false,true)}
+        ${pf('timeRange','🕐 Rango horario',d.timeRange)}
+        ${pf('address','🏠 Dirección',d.address,true)}
+        ${pf('reference','📌 Referencia',d.reference,true)}
+        ${pf('product','🧺 Producto / Box',d.product,true)}
+        ${pf('precio','💵 Total S/',d.precio)}
+        ${pf('extras','✨ Extras / Personalización',d.extras,true)}
+        ${pfTA('cardMessage','💌 Mensaje para tarjeta',d.cardMessage)}
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="closeOverlay('ov-import');editandoId=null;">Cancelar</button>
+      <button class="btn-confirm" onclick="confirmOrder()" id="btn-confirm-order">
+        <svg width="14" height="14" fill="none" viewBox="0 0 14 14"><path d="M2 7l3.5 3.5L12 3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Guardar cambios
+      </button>
+    </div>`;
 };
 
 // ── DETAIL ──
@@ -1179,7 +1300,12 @@ window.openDetail = function(id) {
 
     <div class="detail-actions">
       <button class="btn-danger" onclick="deleteOrder('${id}')">Eliminar</button>
-      <button class="btn-confirm" onclick="closeOverlay('ov-detail')">Cerrar</button>
+      <div style="display:flex;gap:8px">
+        <button onclick="editarPedido('${id}')" style="padding:10px 20px;border-radius:100px;border:1.5px solid var(--sky);color:var(--sky);background:transparent;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s" onmouseover="this.style.background='var(--sky-l)'" onmouseout="this.style.background='transparent'">
+          ✏️ Editar
+        </button>
+        <button class="btn-confirm" onclick="closeOverlay('ov-detail')">Cerrar</button>
+      </div>
     </div>`;
 
   document.getElementById('ov-detail').classList.add('show');
