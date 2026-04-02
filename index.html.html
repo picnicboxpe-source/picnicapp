@@ -1058,7 +1058,7 @@ async function renderBalance() {
   var el = document.getElementById('main-content');
   if (!el) return;
   var today = dayKey(new Date());
-  el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:40px 0;color:var(--ink3)"><div class="spinner" style="width:28px;height:28px;border-width:2px"></div></div>';*/
+  el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:40px 0;color:var(--ink3)"><div class="spinner" style="width:28px;height:28px;border-width:2px"></div></div>';
 
   var cierres = [];
   try {
@@ -1146,6 +1146,7 @@ window.toggleBalDay = function(header) {
   body.style.maxHeight = isOpen ? '0' : '300px';
   if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
 };
+*/
 
 // ── TABS ──
 window.setTab = function(tab, el) {
