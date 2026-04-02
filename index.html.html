@@ -730,7 +730,7 @@ function filterOrders() {
   const today = dayKey(new Date());
   const tomorrow = dayKey(new Date(Date.now()+86400000));
   const weekEnd = dayKey(new Date(Date.now()+7*86400000));
-  if (currentTab==='finanzas') return [];
+  if (currentTab==='finanzas'|| currentTab==='balance') return [];
   switch(currentTab) {
     case 'hoy': return orders.filter(o=>o.deliveryDate===today);
     case 'manana': return orders.filter(o=>o.deliveryDate===tomorrow);
@@ -840,6 +840,16 @@ async function renderBalance() {
   const el = document.getElementById('main-content');
   if (!el) return;
   const today = dayKey(new Date());
+// ===== INGRESOS DESDE PEDIDOS =====
+const ingresosPorDia = {};
+
+orders.forEach(o => {
+  if (o.status === 'entregado' && !o.cerrado) {
+    const fecha = o.fecha; // ⚠️ si no funciona, dime cómo se llama este campo
+    if (!ingresosPorDia[fecha]) ingresosPorDia[fecha] = 0;
+    ingresosPorDia[fecha] += parseFloat(o.precio) || 0;
+  }
+});
 
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto 12px"></div><div class="loading-text">Cargando balance...</div></div>';
 
