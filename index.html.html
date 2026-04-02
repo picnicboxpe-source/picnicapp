@@ -414,9 +414,9 @@ main { padding:20px; max-width:680px; margin:0 auto; }
     <button class="nav-tab" onclick="setTab('hoy',this)">Hoy</button>
     <button class="nav-tab" onclick="setTab('manana',this)">Mañana</button>
     <button class="nav-tab" onclick="setTab('semana',this)">Esta semana</button>
-    <button class="nav-tab" onclick="setTab('pendiente',this)">Pendientes</button>
     <button class="nav-tab" onclick="setTab('entregado',this)">Entregados</button>
     <button class="nav-tab" onclick="setTab('finanzas',this)">💰 Finanzas</button>
+    <button class="nav-tab" onclick="setTab('balance',this)">📊 Balance</button>
   </nav>
 
   <main id="main-content"></main>
@@ -613,6 +613,7 @@ function render() {
   const el = document.getElementById('main-content');
   if (!el) return;
   if (currentTab === 'finanzas') { renderFinanzas(); return; }
+  if (currentTab === 'balance')  { renderBalance();  return; }
   let list = filterOrders();
 
   const today = dayKey(new Date());
@@ -729,7 +730,7 @@ function filterOrders() {
   const today = dayKey(new Date());
   const tomorrow = dayKey(new Date(Date.now()+86400000));
   const weekEnd = dayKey(new Date(Date.now()+7*86400000));
-  if (currentTab==='finanzas') return [];
+  if (currentTab==='finanzas' || currentTab==='balance') return [];
   switch(currentTab) {
     case 'hoy': return orders.filter(o=>o.deliveryDate===today);
     case 'manana': return orders.filter(o=>o.deliveryDate===tomorrow);
@@ -749,11 +750,9 @@ function renderFinanzas() {
   const totalExp = expenses.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
   const expByDay = {};
   expenses.forEach(e=>{ if(!expByDay[e.date])expByDay[e.date]=[]; expByDay[e.date].push(e); });
-
-  const allDays = [...new Set([
-    ...orders.filter(o=>o.deliveryDate).map(o=>o.deliveryDate),
-    ...expenses.map(e=>e.date)
-  ])].sort((a,b)=>b.localeCompare(a)).slice(0,30);
+  const expDays = Object.keys(expByDay).sort((a,b)=>b.localeCompare(a));
+  const chev = (open) => `<svg class="day-chevron${open?' open':''}" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const catIcon = {insumos:'🧺',delivery:'🚚',empaque:'📦',marketing:'📣',personal:'👥',servicios:'💡',otro:'📋'};
 
   el.innerHTML = `
     <div class="summary-bar" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
@@ -803,33 +802,150 @@ function renderFinanzas() {
       </div>
       <button class="btn-confirm" onclick="addExpense()" style="width:100%;justify-content:center">+ Registrar gasto</button>
     </div>
-    <div>${allDays.length===0?'<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">Sin datos aún</div><div class="empty-sub">Registra ventas con precio y agrega gastos.</div></div>':
-    allDays.map(d=>{
-      const dayOrd=orders.filter(o=>o.deliveryDate===d);
-      const dayExpList=expByDay[d]||[];
-      const ing=dayOrd.filter(o=>o.status==='entregado').reduce((s,o)=>s+(parseFloat(o.precio)||0),0);
-      const gas=dayExpList.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
-      const util=ing-gas;
-      return `<div style="background:white;border:1px solid var(--border);border-radius:var(--rr);margin-bottom:12px;overflow:hidden">
-        <div style="padding:14px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
-          <div style="font-family:'Playfair Display',serif;font-size:15px">${formatDayLabel(d)}</div>
-          <div style="display:flex;gap:16px;font-size:12px">
-            <span style="color:var(--grass);font-weight:600">+S/${ing.toFixed(0)}</span>
-            <span style="color:var(--rose);font-weight:600">-S/${gas.toFixed(0)}</span>
-            <span style="color:${util>=0?'var(--grass)':'var(--rose)'};font-weight:700">=${util>=0?'':''}S/${util.toFixed(0)}</span>
+
+    <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--ink2);margin-bottom:10px;padding-left:2px">Gastos por día</div>
+    ${expDays.length === 0
+      ? '<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Sin gastos registrados</div></div>'
+      : expDays.map(d => {
+          const dayExpList = expByDay[d];
+          const gas = dayExpList.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
+          const isToday = d === today;
+          const isPast  = d < today;
+          const open    = isToday || !isPast;
+          return `<div class="day-group" style="margin-bottom:10px">
+            <div class="day-header${isToday?' is-today':''}${isPast?' is-past':''}" onclick="toggleDay(this)">
+              <div class="day-title${isPast?' is-past':''}">${formatDayLabel(d)}</div>
+              <div class="day-meta">
+                <span style="font-size:11px;font-weight:700;color:var(--rose)">-S/${gas.toFixed(0)}</span>
+                <span class="day-count">${dayExpList.length} gasto${dayExpList.length!==1?'s':''}</span>
+                ${chev(open)}
+              </div>
+            </div>
+            <div class="day-body${open?' open':''}">
+              ${dayExpList.map(e=>`
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid var(--border);font-size:13px">
+                  <span style="color:var(--ink2)">${catIcon[e.category]||'📋'} ${e.description}</span>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="color:var(--rose);font-weight:600">-S/${parseFloat(e.amount).toFixed(2)}</span>
+                    <button onclick="deleteExpense('${e.id}')" style="font-size:10px;color:var(--ink3);background:none;border:none;cursor:pointer;padding:2px 6px">✕</button>
+                  </div>
+                </div>`).join('')}
+            </div>
+          </div>`;
+        }).join('')
+    }`;
+}
+// ── BALANCE DIARIO ──
+async function renderBalance() {
+  const el = document.getElementById('main-content');
+  if (!el) return;
+  const today = dayKey(new Date());
+
+  el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto 12px"></div><div class="loading-text">Cargando balance...</div></div>';
+
+  // Leer cierres desde Firestore
+  let cierres = [];
+  try {
+    const fbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const snap = await fbMod.getDocs(fbMod.query(fbMod.collection(db, 'cierres'), fbMod.orderBy('fecha', 'desc')));
+    cierres = snap.docs.map(d => {
+      const data = d.data();
+      const fecha = data.fecha && data.fecha.toDate ? dayKey(data.fecha.toDate()) : (data.fecha || '');
+      return { ...data, fecha };
+    });
+  } catch(e) { /* sin cierres aún */ }
+
+  // Ingresos por día (de cierres)
+  const ingByDay = {};
+  cierres.forEach(c => {
+    if (!ingByDay[c.fecha]) ingByDay[c.fecha] = 0;
+    ingByDay[c.fecha] += parseFloat(c.total) || 0;
+  });
+
+  // Gastos por día (de expenses en memoria)
+  const gassByDay = {};
+  expenses.forEach(e => {
+    if (!gassByDay[e.date]) gassByDay[e.date] = 0;
+    gassByDay[e.date] += parseFloat(e.amount) || 0;
+  });
+
+  // Unión de días únicos
+  const allDays = [...new Set([...Object.keys(ingByDay), ...Object.keys(gassByDay)])]
+    .filter(Boolean).sort((a,b) => b.localeCompare(a)).slice(0, 60);
+
+  const totalIng = Object.values(ingByDay).reduce((s,v)=>s+v, 0);
+  const totalGas = Object.values(gassByDay).reduce((s,v)=>s+v, 0);
+  const totalGan = totalIng - totalGas;
+
+  const chev = (open) => '<svg class="day-chevron' + (open?' open':'') + '" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  const ganColor  = totalGan >= 0 ? 'var(--grass)' : 'var(--rose)';
+  const ganBorder = totalGan >= 0 ? 'var(--grass-l)' : 'var(--rose-l)';
+  const ganBg     = totalGan >= 0 ? 'var(--grass-ll)' : 'var(--rose-l)';
+
+  let daysHTML = '';
+  if (allDays.length === 0) {
+    daysHTML = '<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">Sin datos aún</div><div class="empty-sub">Registra gastos y cierra días para ver el balance.</div></div>';
+  } else {
+    allDays.forEach(d => {
+      const ing = ingByDay[d]  || 0;
+      const gas = gassByDay[d] || 0;
+      const gan = ing - gas;
+      const pos = gan >= 0;
+      const isToday = d === today;
+      const isPast  = d < today;
+      const open    = isToday || !isPast;
+      const ganC    = pos ? 'var(--grass)' : 'var(--rose)';
+      const ganBgD  = pos ? 'var(--grass-ll)' : 'var(--rose-l)';
+
+      daysHTML += `<div class="day-group" style="margin-bottom:10px">
+        <div class="day-header${isToday?' is-today':''}${isPast?' is-past':''}" onclick="toggleDay(this)">
+          <div class="day-title${isPast?' is-past':''}">${formatDayLabel(d)}</div>
+          <div class="day-meta" style="gap:10px">
+            <span style="font-size:11px;color:var(--grass);font-weight:600">+S/${ing.toFixed(0)}</span>
+            <span style="font-size:11px;color:var(--rose);font-weight:600">-S/${gas.toFixed(0)}</span>
+            <span style="font-size:12px;font-weight:700;color:${ganC};background:${ganBgD};padding:3px 10px;border-radius:100px">${pos?'+':''}S/${gan.toFixed(0)}</span>
+            ${chev(open)}
           </div>
         </div>
-        ${dayExpList.length>0?`<div style="padding:10px 18px">${dayExpList.map(e=>`
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
-            <span style="color:var(--ink2)">${{insumos:'🧺',delivery:'🚚',empaque:'📦',marketing:'📣',personal:'👥',servicios:'💡',otro:'📋'}[e.category]||'📋'} ${e.description}</span>
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="color:var(--rose);font-weight:600">-S/${parseFloat(e.amount).toFixed(2)}</span>
-              <button onclick="deleteExpense('${e.id}')" style="font-size:10px;color:var(--ink3);background:none;border:none;cursor:pointer;padding:2px 6px">✕</button>
+        <div class="day-body${open?' open':''}">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:12px 4px 4px">
+            <div style="background:var(--grass-ll);border-radius:var(--r);padding:12px;text-align:center">
+              <div style="font-size:10px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Ingresos</div>
+              <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--grass)">S/${ing.toFixed(0)}</div>
             </div>
-          </div>`).join('')}</div>`:''}
+            <div style="background:var(--rose-l);border-radius:var(--r);padding:12px;text-align:center">
+              <div style="font-size:10px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Gastos</div>
+              <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--rose)">S/${gas.toFixed(0)}</div>
+            </div>
+            <div style="background:${ganBgD};border-radius:var(--r);padding:12px;text-align:center">
+              <div style="font-size:10px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Ganancia</div>
+              <div style="font-family:'Playfair Display',serif;font-size:18px;color:${ganC}">${pos?'+':''}S/${gan.toFixed(0)}</div>
+            </div>
+          </div>
+        </div>
       </div>`;
-    }).join('')}</div>`;
+    });
+  }
+
+  el.innerHTML = `
+    <div class="summary-bar" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
+      <div class="sum-card">
+        <div class="sum-num" style="color:var(--grass)">S/ ${totalIng.toFixed(0)}</div>
+        <div class="sum-label">Ingresos totales</div>
+      </div>
+      <div class="sum-card">
+        <div class="sum-num" style="color:var(--rose)">S/ ${totalGas.toFixed(0)}</div>
+        <div class="sum-label">Gastos totales</div>
+      </div>
+      <div class="sum-card" style="border:1.5px solid ${ganBorder};background:${ganBg}">
+        <div class="sum-num" style="color:${ganColor}">S/ ${totalGan.toFixed(0)}</div>
+        <div class="sum-label">Ganancia neta</div>
+      </div>
+    </div>
+    ${daysHTML}`;
 }
+
 
 window.addExpense = async function() {
   const desc = document.getElementById('exp-desc').value.trim();
