@@ -862,6 +862,15 @@ async function renderBalance() {
     ingByDay[c.fecha] += parseFloat(c.total) || 0;
   });
 
+  // Ingresos desde pedidos entregados NO cerrados (día actual o pendientes de cierre)
+orders
+  .filter(o => o.status === 'entregado' && !o.cerrado)
+  .forEach(o => {
+    if (!o.deliveryDate) return;
+    if (!ingByDay[o.deliveryDate]) ingByDay[o.deliveryDate] = 0;
+    ingByDay[o.deliveryDate] += parseFloat(o.precio) || 0;
+  });
+
   // Gastos por día (de expenses en memoria)
   const gassByDay = {};
   expenses.forEach(e => {
