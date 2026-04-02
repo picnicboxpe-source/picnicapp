@@ -730,7 +730,7 @@ function filterOrders() {
   const today = dayKey(new Date());
   const tomorrow = dayKey(new Date(Date.now()+86400000));
   const weekEnd = dayKey(new Date(Date.now()+7*86400000));
-  if (currentTab==='finanzas' || currentTab==='balance') return [];
+  if (currentTab==='finanzas') return [];
   switch(currentTab) {
     case 'hoy': return orders.filter(o=>o.deliveryDate===today);
     case 'manana': return orders.filter(o=>o.deliveryDate===tomorrow);
