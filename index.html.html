@@ -836,28 +836,21 @@ function renderFinanzas() {
     }`;
 }
 // ── BALANCE DIARIO ──
+// ── BALANCE DIARIO CON INGRESOS CERRADOS Y ACTIVOS (TOOLTIP) ──
 async function renderBalance() {
   const el = document.getElementById('main-content');
   if (!el) return;
   const today = dayKey(new Date());
-// ===== INGRESOS DESDE PEDIDOS =====
-const ingresosPorDia = {};
-
-orders.forEach(o => {
-  if (o.status === 'entregado' && !o.cerrado) {
-    const fecha = o.fecha; // ⚠️ si no funciona, dime cómo se llama este campo
-    if (!ingresosPorDia[fecha]) ingresosPorDia[fecha] = 0;
-    ingresosPorDia[fecha] += parseFloat(o.precio) || 0;
-  }
-});
 
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto 12px"></div><div class="loading-text">Cargando balance...</div></div>';
 
-  // Leer cierres desde Firestore
+  // --- 1. Leer cierres desde Firestore ---
   let cierres = [];
   try {
     const fbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-    const snap = await fbMod.getDocs(fbMod.query(fbMod.collection(db, 'cierres'), fbMod.orderBy('fecha', 'desc')));
+    const snap = await fbMod.getDocs(
+      fbMod.query(fbMod.collection(db, 'cierres'), fbMod.orderBy('fecha', 'desc'))
+    );
     cierres = snap.docs.map(d => {
       const data = d.data();
       const fecha = data.fecha && data.fecha.toDate ? dayKey(data.fecha.toDate()) : (data.fecha || '');
@@ -865,24 +858,39 @@ orders.forEach(o => {
     });
   } catch(e) { /* sin cierres aún */ }
 
-  // Ingresos por día (de cierres)
-  const ingByDay = {};
+  // --- 2. Ingresos por día ---
+  const ingByDay = {};        // Todos los ingresos
+  const ingClosedByDay = {};  // Solo ingresos ya cerrados
+
+  // 2a. Ingresos de cierres (cerrados)
   cierres.forEach(c => {
     if (!ingByDay[c.fecha]) ingByDay[c.fecha] = 0;
+    if (!ingClosedByDay[c.fecha]) ingClosedByDay[c.fecha] = 0;
+
     ingByDay[c.fecha] += parseFloat(c.total) || 0;
+    ingClosedByDay[c.fecha] += parseFloat(c.total) || 0;
   });
 
-  // Gastos por día (de expenses en memoria)
+  // 2b. Ingresos activos (pedidos entregados pero no cerrados)
+  orders.forEach(o => {
+    if (o.status !== 'entregado') return;
+    const fecha = dayKey(new Date(o.fecha));
+    if (!ingByDay[fecha]) ingByDay[fecha] = 0;
+    ingByDay[fecha] += parseFloat(o.precio) || 0;
+  });
+
+  // --- 3. Gastos por día ---
   const gassByDay = {};
   expenses.forEach(e => {
     if (!gassByDay[e.date]) gassByDay[e.date] = 0;
     gassByDay[e.date] += parseFloat(e.amount) || 0;
   });
 
-  // Unión de días únicos
+  // --- 4. Unión de días únicos ---
   const allDays = [...new Set([...Object.keys(ingByDay), ...Object.keys(gassByDay)])]
     .filter(Boolean).sort((a,b) => b.localeCompare(a)).slice(0, 60);
 
+  // --- 5. Totales ---
   const totalIng = Object.values(ingByDay).reduce((s,v)=>s+v, 0);
   const totalGas = Object.values(gassByDay).reduce((s,v)=>s+v, 0);
   const totalGan = totalIng - totalGas;
@@ -893,12 +901,15 @@ orders.forEach(o => {
   const ganBorder = totalGan >= 0 ? 'var(--grass-l)' : 'var(--rose-l)';
   const ganBg     = totalGan >= 0 ? 'var(--grass-ll)' : 'var(--rose-l)';
 
+  // --- 6. Construir HTML por día ---
   let daysHTML = '';
   if (allDays.length === 0) {
     daysHTML = '<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">Sin datos aún</div><div class="empty-sub">Registra gastos y cierra días para ver el balance.</div></div>';
   } else {
     allDays.forEach(d => {
       const ing = ingByDay[d]  || 0;
+      const ingClosed = ingClosedByDay[d] || 0;
+      const activeIng = ing - ingClosed; // ingresos no cerrados
       const gas = gassByDay[d] || 0;
       const gan = ing - gas;
       const pos = gan >= 0;
@@ -908,11 +919,21 @@ orders.forEach(o => {
       const ganC    = pos ? 'var(--grass)' : 'var(--rose)';
       const ganBgD  = pos ? 'var(--grass-ll)' : 'var(--rose-l)';
 
+      // Ingreso activo con ícono y tooltip si hay
+      const activeHTML = activeIng > 0
+        ? `<span style="font-size:11px;color:var(--yellow);font-weight:600" title="💡 No cerrado aún">+S/${activeIng.toFixed(0)}</span>`
+        : '';
+
+      const activeBodyHTML = activeIng > 0
+        ? `<span style="font-size:12px;color:var(--yellow)" title="💡 No cerrado aún">+${activeIng.toFixed(0)}</span>`
+        : '';
+
       daysHTML += `<div class="day-group" style="margin-bottom:10px">
         <div class="day-header${isToday?' is-today':''}${isPast?' is-past':''}" onclick="toggleDay(this)">
           <div class="day-title${isPast?' is-past':''}">${formatDayLabel(d)}</div>
           <div class="day-meta" style="gap:10px">
-            <span style="font-size:11px;color:var(--grass);font-weight:600">+S/${ing.toFixed(0)}</span>
+            <span style="font-size:11px;color:var(--grass);font-weight:600">+S/${ingClosed.toFixed(0)}</span>
+            ${activeHTML}
             <span style="font-size:11px;color:var(--rose);font-weight:600">-S/${gas.toFixed(0)}</span>
             <span style="font-size:12px;font-weight:700;color:${ganC};background:${ganBgD};padding:3px 10px;border-radius:100px">${pos?'+':''}S/${gan.toFixed(0)}</span>
             ${chev(open)}
@@ -922,7 +943,10 @@ orders.forEach(o => {
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:12px 4px 4px">
             <div style="background:var(--grass-ll);border-radius:var(--r);padding:12px;text-align:center">
               <div style="font-size:10px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Ingresos</div>
-              <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--grass)">S/${ing.toFixed(0)}</div>
+              <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--grass)">
+                S/${ingClosed.toFixed(0)}
+                ${activeBodyHTML}
+              </div>
             </div>
             <div style="background:var(--rose-l);border-radius:var(--r);padding:12px;text-align:center">
               <div style="font-size:10px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Gastos</div>
@@ -938,6 +962,7 @@ orders.forEach(o => {
     });
   }
 
+  // --- 7. Resumen general ---
   el.innerHTML = `
     <div class="summary-bar" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
       <div class="sum-card">
@@ -955,61 +980,6 @@ orders.forEach(o => {
     </div>
     ${daysHTML}`;
 }
-
-
-window.addExpense = async function() {
-  const desc = document.getElementById('exp-desc').value.trim();
-  const amount = document.getElementById('exp-amount').value;
-  const date = document.getElementById('exp-date').value;
-  const category = document.getElementById('exp-cat').value;
-  if (!desc||!amount||!date) { showToast('Completa descripción, monto y fecha'); return; }
-  const ok = await window.saveExpense({ description:desc, amount:parseFloat(amount), date, category });
-  if (ok) showToast('✅ Gasto registrado');
-};
-
-window.deleteExpense = async function(id) {
-  await window.removeExpense(id);
-  showToast('Gasto eliminado');
-};
-
-window.cerrarDia = async function() {
-  const elegibles = orders.filter(o => o.status === 'entregado' && !o.cerrado);
-  if (elegibles.length === 0) {
-    showToast('No hay pedidos entregados por cerrar');
-    return;
-  }
-
-  // Calcular totales ANTES de cerrar
-  const cantidadPedidos = elegibles.length;
-  const totalCierre = elegibles.reduce((s, o) => s + (parseFloat(o.precio) || 0), 0);
-
-  const confirmar = confirm(
-    `¿Cerrar día?\n\n` +
-    `Pedidos entregados: ${cantidadPedidos}\n` +
-    `Total: S/ ${totalCierre.toFixed(2)}\n\n` +
-    `Ya no contarán en el total de ingresos.`
-  );
-  if (!confirmar) return;
-
-  try {
-    // 1. Guardar registro en colección "cierres"
-    await addDoc(collection(db, 'cierres'), {
-      fecha: serverTimestamp(),
-      cantidadPedidos,
-      total: totalCierre,
-      pedidosIds: elegibles.map(o => o.id)
-    });
-
-    // 2. Marcar pedidos como cerrados (lógica original intacta)
-    await Promise.all(
-      elegibles.map(o => updateDoc(doc(db, 'orders', o.id), { cerrado: true }))
-    );
-
-    showToast(`✅ Día cerrado — ${cantidadPedidos} pedido${cantidadPedidos !== 1 ? 's' : ''} · S/ ${totalCierre.toFixed(2)}`);
-  } catch(e) {
-    showToast('Error al cerrar día: ' + e.message);
-  }
-};
 
 // ── HISTORIAL DE CIERRES ──
 window.verHistorialCierres = async function() {
