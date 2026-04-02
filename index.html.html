@@ -186,10 +186,26 @@ main { padding:20px; max-width:680px; margin:0 auto; }
 .sum-num { font-family:'Playfair Display',serif; font-size:24px; color:var(--ink); line-height:1; margin-bottom:3px; }
 .sum-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--ink3); }
 
-.day-group { margin-bottom:24px; }
-.day-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
-.day-title { font-family:'Playfair Display',serif; font-size:17px; color:var(--ink); display:flex; align-items:center; gap:8px; }
+.day-group { margin-bottom:12px; }
+.day-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 16px; border-radius:var(--rr);
+  background:white; border:1px solid var(--border);
+  cursor:pointer; user-select:none;
+  transition:border-color .15s, background .15s;
+}
+.day-header:hover { border-color:var(--border2); background:var(--paper); }
+.day-header.is-today { border-color:var(--grass-l); background:var(--grass-ll); }
+.day-header.is-past { background:var(--paper2); border-color:var(--border); }
+.day-title { font-family:'Playfair Display',serif; font-size:16px; color:var(--ink); display:flex; align-items:center; gap:8px; flex:1; }
+.day-title.is-past { color:var(--ink3); font-size:15px; }
+.day-meta { display:flex; align-items:center; gap:10px; }
 .day-count { background:var(--paper3); color:var(--ink2); font-size:11px; font-weight:700; padding:3px 10px; border-radius:100px; }
+.day-header.is-today .day-count { background:var(--grass-l); color:#1E4D2E; }
+.day-chevron { transition:transform .25s; color:var(--ink3); flex-shrink:0; }
+.day-chevron.open { transform:rotate(180deg); }
+.day-body { overflow:hidden; transition:max-height .3s ease, opacity .25s ease; max-height:0; opacity:0; padding-top:0; }
+.day-body.open { max-height:4000px; opacity:1; padding-top:8px; }
 
 .order-card {
   background:white; border:1px solid var(--border); border-radius:var(--rr);
@@ -636,16 +652,49 @@ function render() {
     groups[k].push(o);
   });
 
-  Object.keys(groups).sort((a,b) => {
+  const sortedKeys = Object.keys(groups).sort((a,b) => {
     if (a==='__sin_fecha__') return 1;
     if (b==='__sin_fecha__') return -1;
     return a.localeCompare(b);
-  }).forEach(k => {
+  });
+
+  sortedKeys.forEach(k => {
     const dayOrders = groups[k];
-    const dayLabel = k==='__sin_fecha__' ? 'Sin fecha' : formatDayLabel(k);
+    const isToday = k === today;
+    const isPast  = k !== '__sin_fecha__' && k < today;
+    // Open by default: today and future; closed: past dates
+    const openByDefault = !isPast;
+
+    const dayLabel = k === '__sin_fecha__' ? 'Sin fecha' : formatDayLabel(k);
+    const cnt = dayOrders.length;
+
     const div = document.createElement('div');
     div.className = 'day-group';
-    div.innerHTML = `<div class="day-header"><div class="day-title">${dayLabel}</div><span class="day-count">${dayOrders.length} pedido${dayOrders.length!==1?'s':''}</span></div>`;
+
+    // Chevron SVG
+    const chevron = `<svg class="day-chevron${openByDefault?' open':''}" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    // Total del día (solo entregados no cerrados)
+    const totalDia = dayOrders
+      .filter(o => o.status === 'entregado' && !o.cerrado)
+      .reduce((s,o) => s+(parseFloat(o.precio)||0), 0);
+    const totalTag = totalDia > 0
+      ? `<span style="font-size:11px;font-weight:700;color:var(--grass)">S/${totalDia.toFixed(0)}</span>`
+      : '';
+
+    div.innerHTML = `
+      <div class="day-header${isToday?' is-today':''}${isPast?' is-past':''}" onclick="toggleDay(this)">
+        <div class="day-title${isPast?' is-past':''}">${dayLabel}</div>
+        <div class="day-meta">
+          ${totalTag}
+          <span class="day-count">${cnt} pedido${cnt!==1?'s':''}</span>
+          ${chevron}
+        </div>
+      </div>
+      <div class="day-body${openByDefault?' open':''}"></div>`;
+
+    const body = div.querySelector('.day-body');
+
     dayOrders.forEach(o => {
       const card = document.createElement('div');
       card.className = `order-card s-${o.status||'pendiente'}`;
@@ -661,11 +710,20 @@ function render() {
           ${o.recipientName?`<span class="meta-chip">🎁 ${o.recipientName}</span>`:''}
           ${o.precio?`<span class="meta-chip" style="color:var(--grass);font-weight:600">S/${parseFloat(o.precio).toFixed(0)}</span>`:''}
         </div>`;
-      div.appendChild(card);
+      body.appendChild(card);
     });
+
     el.appendChild(div);
   });
 }
+
+window.toggleDay = function(header) {
+  const chevron = header.querySelector('.day-chevron');
+  const body    = header.nextElementSibling;
+  const isOpen  = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  if (chevron) chevron.classList.toggle('open', !isOpen);
+};
 
 function filterOrders() {
   const today = dayKey(new Date());
