@@ -855,12 +855,25 @@ async function renderBalance() {
     });
   } catch(e) { /* sin cierres aún */ }
 
-  // Ingresos por día (de cierres)
+  // Ingresos por día — fuente 1: cierres históricos (pedidos ya cerrados)
   const ingByDay = {};
   cierres.forEach(c => {
+    if (!c.fecha) return;
     if (!ingByDay[c.fecha]) ingByDay[c.fecha] = 0;
     ingByDay[c.fecha] += parseFloat(c.total) || 0;
   });
+
+  // Ingresos por día — fuente 2: pedidos entregados aún no cerrados (en memoria)
+  orders
+    .filter(o => o.status === 'entregado' && !o.cerrado && o.deliveryDate && o.precio)
+    .forEach(o => {
+      const fecha = typeof o.deliveryDate === 'string'
+        ? o.deliveryDate.slice(0, 10)
+        : dayKey(new Date(o.deliveryDate.toDate ? o.deliveryDate.toDate() : o.deliveryDate));
+      if (!fecha) return;
+      if (!ingByDay[fecha]) ingByDay[fecha] = 0;
+      ingByDay[fecha] += parseFloat(o.precio) || 0;
+    });
 
   // Gastos por día (de expenses en memoria)
   const gassByDay = {};
@@ -969,33 +982,49 @@ window.cerrarDia = async function() {
     return;
   }
 
-  // Calcular totales ANTES de cerrar
+  // ── Calcular cifras del cuadre ANTES de cerrar ──
   const cantidadPedidos = elegibles.length;
-  const totalCierre = elegibles.reduce((s, o) => s + (parseFloat(o.precio) || 0), 0);
+  const totalIngresos   = elegibles.reduce((s, o) => s + (parseFloat(o.precio) || 0), 0);
+  const totalGastos     = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  const balanceDia      = totalIngresos - totalGastos;
 
   const confirmar = confirm(
-    `¿Cerrar día?\n\n` +
-    `Pedidos entregados: ${cantidadPedidos}\n` +
-    `Total: S/ ${totalCierre.toFixed(2)}\n\n` +
-    `Ya no contarán en el total de ingresos.`
+    `¿Cerrar día y hacer cuadre?\n\n` +
+    `Pedidos entregados : ${cantidadPedidos}\n` +
+    `Ingresos           : S/ ${totalIngresos.toFixed(2)}\n` +
+    `Gastos del período : S/ ${totalGastos.toFixed(2)}\n` +
+    `Balance            : S/ ${balanceDia.toFixed(2)}\n\n` +
+    `Los gastos se borrarán y quedarán en 0.\n` +
+    `Los pedidos entregados se marcarán como cerrados.`
   );
   if (!confirmar) return;
 
   try {
-    // 1. Guardar registro en colección "cierres"
+    // 1. Guardar cierre con balance incluido
     await addDoc(collection(db, 'cierres'), {
       fecha: serverTimestamp(),
       cantidadPedidos,
-      total: totalCierre,
-      pedidosIds: elegibles.map(o => o.id)
+      total:          totalIngresos,
+      totalGastos,
+      balance:        balanceDia,
+      pedidosIds:     elegibles.map(o => o.id)
     });
 
-    // 2. Marcar pedidos como cerrados (lógica original intacta)
+    // 2. Marcar pedidos como cerrados
     await Promise.all(
       elegibles.map(o => updateDoc(doc(db, 'orders', o.id), { cerrado: true }))
     );
 
-    showToast(`✅ Día cerrado — ${cantidadPedidos} pedido${cantidadPedidos !== 1 ? 's' : ''} · S/ ${totalCierre.toFixed(2)}`);
+    // 3. Reset de gastos — borrar todos los documentos de la colección expenses
+    if (expenses.length > 0) {
+      await Promise.all(
+        expenses.map(e => deleteDoc(doc(db, 'expenses', e.id)))
+      );
+    }
+
+    showToast(
+      `✅ Día cerrado · Balance: ${balanceDia >= 0 ? '+' : ''}S/ ${balanceDia.toFixed(2)}`
+    );
   } catch(e) {
     showToast('Error al cerrar día: ' + e.message);
   }
