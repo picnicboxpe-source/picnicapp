@@ -711,7 +711,9 @@ function render() {
           ${o.timeRange?`<span class="meta-chip">🕐 ${o.timeRange}</span>`:''}
           ${o.recipientName?`<span class="meta-chip">🎁 ${o.recipientName}</span>`:''}
           ${o.precio?`<span class="meta-chip" style="color:var(--grass);font-weight:600">S/${parseFloat(o.precio).toFixed(0)}</span>`:''}
-        </div>`;
+        </div>
+        ${o.address?`<div style="font-size:12px;color:var(--ink3);margin-top:6px;padding-left:8px;display:flex;align-items:flex-start;gap:4px"><span>📍</span><span>${o.address}</span></div>`:''}
+        ${o.extras?`<div style="font-size:12px;color:var(--ink2);margin-top:4px;padding-left:8px;display:flex;align-items:flex-start;gap:4px"><span>✨</span><span>${o.extras}</span></div>`:''}`;
       body.appendChild(card);
     });
 
