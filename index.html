@@ -1512,7 +1512,10 @@ window.openDetail = function(id) {
     <div class="detail-actions">
       <button class="btn-danger" onclick="deleteOrder('${id}')">Eliminar</button>
       <div style="display:flex;gap:8px">
-        <button onclick="editarPedido('${id}')" style="padding:10px 20px;border-radius:100px;border:1.5px solid var(--sky);color:var(--sky);background:transparent;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s" onmouseover="this.style.background='var(--sky-l)'" onmouseout="this.style.background='transparent'">
+        <button onclick="copyDatos('${id}')" id="btn-datos-${id}" style="padding:10px 18px;border-radius:100px;border:1.5px solid var(--ink2);color:var(--ink2);background:transparent;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s" onmouseover="this.style.background='var(--paper3)'" onmouseout="this.style.background='transparent'">
+          📋 Datos
+        </button>
+        <button onclick="editarPedido('${id}')" style="padding:10px 18px;border-radius:100px;border:1.5px solid var(--sky);color:var(--sky);background:transparent;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s" onmouseover="this.style.background='var(--sky-l)'" onmouseout="this.style.background='transparent'">
           ✏️ Editar
         </button>
         <button class="btn-confirm" onclick="closeOverlay('ov-detail')">Cerrar</button>
@@ -1529,6 +1532,34 @@ window.copyMsg = function(id) {
     const btn = document.getElementById('copy-btn-'+id);
     if (btn) { btn.textContent='✅ Copiado'; setTimeout(()=>{btn.textContent='📋 Copiar';},2000); }
   }).catch(()=>showToast('No se pudo copiar'));
+};
+
+window.copyDatos = function(id) {
+  const o = orders.find(x => x.id === id);
+  if (!o) return;
+
+  const lineas = [];
+  // Envia: Nombre + teléfono
+  const envia = [o.clientName, o.phone].filter(Boolean).join(' ');
+  if (envia) lineas.push('Envia: ' + envia);
+  // Recibe: Nombre + teléfono
+  const recibe = [o.recipientName, o.recipientPhone].filter(Boolean).join(' ');
+  if (recibe) lineas.push('Recibe: ' + recibe);
+  // Dirección
+  if (o.address) lineas.push('Dirección: ' + o.address);
+  // Referencia
+  if (o.reference) lineas.push('Referencia: ' + o.reference);
+
+  if (lineas.length === 0) { showToast('Sin datos de entrega para copiar'); return; }
+
+  const texto = lineas.join('\n');
+  navigator.clipboard.writeText(texto).then(() => {
+    const btn = document.getElementById('btn-datos-' + id);
+    if (btn) {
+      btn.textContent = '✅ Copiado';
+      setTimeout(() => { btn.textContent = '📋 Datos'; }, 2000);
+    }
+  }).catch(() => showToast('No se pudo copiar'));
 };
 
 window.changeStatus = async function(id, newStatus, btnEl) {
