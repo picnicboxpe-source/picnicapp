@@ -893,10 +893,19 @@ async function renderBalance() {
   const totalGas = Object.values(gassByDay).reduce((s,v)=>s+v, 0);
   const totalGan = totalIng - totalGas;
 
-  // Total acumulado del mes — suma de todos los campos "balance" guardados en cierres del mes actual
-  const mesActual = today.slice(0, 7); // "YYYY-MM"
+  // Total acumulado del mes — suma de balances de cierres desde el último inicio de mes registrado
+  // Lee el doc "config/mesInicio" para saber desde qué fecha contar
+  let mesInicioFecha = null;
+  try {
+    const fbMod2 = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const cfgDoc = await fbMod2.getDoc(fbMod2.doc(db, 'config', 'mesInicio'));
+    if (cfgDoc.exists()) {
+      const d = cfgDoc.data();
+      mesInicioFecha = d.fecha && d.fecha.toDate ? dayKey(d.fecha.toDate()) : (d.fecha || null);
+    }
+  } catch(e) {}
   const totalMes = cierres
-    .filter(c => c.fecha && c.fecha.startsWith(mesActual))
+    .filter(c => c.fecha && (!mesInicioFecha || c.fecha >= mesInicioFecha))
     .reduce((s, c) => s + (parseFloat(c.balance) || 0), 0);
 
   const chev = (open) => '<svg class="day-chevron' + (open?' open':'') + '" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -964,6 +973,12 @@ async function renderBalance() {
     </div>
 
     <!-- Totales del período visible -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3)">Período actual</div>
+      <button onclick="resetTotales()" style="font-size:11px;font-weight:600;padding:5px 14px;border-radius:100px;border:1.5px solid var(--border2);background:transparent;color:var(--ink3);cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.borderColor='var(--rose)';this.style.color='var(--rose)'" onmouseout="this.style.borderColor='var(--border2)';this.style.color='var(--ink3)'">
+        🔄 Reset totales
+      </button>
+    </div>
     <div class="summary-bar" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
       <div class="sum-card">
         <div class="sum-num" style="color:var(--grass)">S/ ${totalIng.toFixed(0)}</div>
@@ -982,22 +997,53 @@ async function renderBalance() {
 }
 
 
+// Reset del mes — guarda una fecha de inicio, los cierres anteriores dejan de contar
 window.resetBalance = async function() {
   const confirmar = confirm(
-    '¿Resetear el balance?\n\n' +
-    'Esto borrará todos los registros de cierres.\n' +
-    'Los totales de Ingresos, Gastos y Ganancia quedarán en S/ 0.'
+    '¿Iniciar nuevo mes?\n\n' +
+    'El acumulado del mes comenzará desde hoy.\n' +
+    'Los cierres anteriores se conservan en el historial.'
   );
   if (!confirmar) return;
   try {
     const fbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-    const snap = await fbMod.getDocs(fbMod.collection(db, 'cierres'));
-    if (snap.empty) { showToast('El balance ya está en 0'); return; }
-    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'cierres', d.id))));
-    showToast('✅ Balance reseteado');
+    await fbMod.setDoc(fbMod.doc(db, 'config', 'mesInicio'), {
+      fecha: serverTimestamp()
+    });
+    showToast('✅ Nuevo mes iniciado');
     renderBalance();
   } catch(e) {
-    showToast('Error al resetear: ' + e.message);
+    showToast('Error: ' + e.message);
+  }
+};
+
+// Reset de totales (Ingresos / Gastos / Ganancia neta) — borra gastos y cierra pedidos entregados
+window.resetTotales = async function() {
+  const tieneGastos   = expenses.length > 0;
+  const tieneEntregados = orders.some(o => o.status === 'entregado' && !o.cerrado);
+  if (!tieneGastos && !tieneEntregados) {
+    showToast('Los totales ya están en 0');
+    return;
+  }
+  const confirmar = confirm(
+    '¿Resetear los totales?\n\n' +
+    'Se borrarán los gastos registrados.\n' +
+    'Los pedidos entregados se marcarán como cerrados.'
+  );
+  if (!confirmar) return;
+  try {
+    if (tieneGastos) {
+      await Promise.all(expenses.map(e => deleteDoc(doc(db, 'expenses', e.id))));
+      expenses = [];
+    }
+    if (tieneEntregados) {
+      const entregados = orders.filter(o => o.status === 'entregado' && !o.cerrado);
+      await Promise.all(entregados.map(o => updateDoc(doc(db, 'orders', o.id), { cerrado: true })));
+    }
+    showToast('✅ Totales reseteados');
+    render();
+  } catch(e) {
+    showToast('Error: ' + e.message);
   }
 };
 
