@@ -893,6 +893,12 @@ async function renderBalance() {
   const totalGas = Object.values(gassByDay).reduce((s,v)=>s+v, 0);
   const totalGan = totalIng - totalGas;
 
+  // Total acumulado del mes — suma de todos los campos "balance" guardados en cierres del mes actual
+  const mesActual = today.slice(0, 7); // "YYYY-MM"
+  const totalMes = cierres
+    .filter(c => c.fecha && c.fecha.startsWith(mesActual))
+    .reduce((s, c) => s + (parseFloat(c.balance) || 0), 0);
+
   const chev = (open) => '<svg class="day-chevron' + (open?' open':'') + '" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   const ganColor  = totalGan >= 0 ? 'var(--grass)' : 'var(--rose)';
@@ -945,6 +951,19 @@ async function renderBalance() {
   }
 
   el.innerHTML = `
+    <!-- Acumulado del mes -->
+    <div style="background:var(--ink);border-radius:var(--rr);padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.5);margin-bottom:4px">Acumulado del mes</div>
+        <div style="font-family:'Playfair Display',serif;font-size:26px;color:${totalMes>=0?'#7FDFAA':'#F4A0A0'}">${totalMes>=0?'+':''}S/ ${totalMes.toFixed(0)}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:2px">Suma de cierres de ${new Date(today+'T12:00:00').toLocaleDateString('es-PE',{month:'long',year:'numeric'})}</div>
+      </div>
+      <button onclick="resetBalance()" style="flex-shrink:0;padding:9px 18px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);border:1.5px solid rgba(255,255,255,.2);border-radius:100px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.2)'" onmouseout="this.style.background='rgba(255,255,255,.1)'">
+        🗑 Reset
+      </button>
+    </div>
+
+    <!-- Totales del período visible -->
     <div class="summary-bar" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
       <div class="sum-card">
         <div class="sum-num" style="color:var(--grass)">S/ ${totalIng.toFixed(0)}</div>
@@ -962,6 +981,25 @@ async function renderBalance() {
     ${daysHTML}`;
 }
 
+
+window.resetBalance = async function() {
+  const confirmar = confirm(
+    '¿Resetear el balance?\n\n' +
+    'Esto borrará todos los registros de cierres.\n' +
+    'Los totales de Ingresos, Gastos y Ganancia quedarán en S/ 0.'
+  );
+  if (!confirmar) return;
+  try {
+    const fbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const snap = await fbMod.getDocs(fbMod.collection(db, 'cierres'));
+    if (snap.empty) { showToast('El balance ya está en 0'); return; }
+    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'cierres', d.id))));
+    showToast('✅ Balance reseteado');
+    renderBalance();
+  } catch(e) {
+    showToast('Error al resetear: ' + e.message);
+  }
+};
 
 window.addExpense = async function() {
   const desc = document.getElementById('exp-desc').value.trim();
