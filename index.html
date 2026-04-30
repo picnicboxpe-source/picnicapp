@@ -826,21 +826,29 @@ function initTouchSort(handle, card, container) {
     }
   }, { passive: false });
 
-  handle.addEventListener('touchend', async () => {
-    if (!ghost) return;
-    ghost.remove();
-    ghost = null;
+  function cleanup() {
+    if (ghost) { ghost.remove(); ghost = null; }
     card.classList.remove('sorting-active');
     container.querySelectorAll('.order-card.sort-target').forEach(c => c.classList.remove('sort-target'));
+  }
 
-    if (currentTarget) {
+  handle.addEventListener('touchend', async e => {
+    const savedTarget = currentTarget;
+    currentTarget = null;
+    cleanup();
+    if (savedTarget) {
       const draggedId = card.dataset.orderId;
-      const targetId  = currentTarget.dataset.orderId;
+      const targetId  = savedTarget.dataset.orderId;
       if (draggedId && targetId && draggedId !== targetId) {
         await reorderCard(draggedId, targetId, container);
       }
     }
+  }, { passive: false });
+
+  // Safety: cancel if touch interrupted
+  handle.addEventListener('touchcancel', () => {
     currentTarget = null;
+    cleanup();
   }, { passive: true });
 }
 
@@ -856,13 +864,17 @@ async function reorderCard(draggedId, targetId, container) {
   newIds.splice(toIdx, 0, draggedId);
 
   const base = Date.now();
-  try {
-    await Promise.all(
-      newIds.map((id, i) => updateDoc(doc(db, 'orders', id), { sortOrder: base + i * 1000 }))
-    );
-  } catch(e) {
-    showToast('Error al reordenar');
-  }
+  // 1. Update local memory immediately → instant visual update, no flash
+  newIds.forEach((id, i) => {
+    const o = orders.find(x => x.id === id);
+    if (o) o.sortOrder = base + i * 1000;
+  });
+  render(); // instant, no waiting for Firestore
+
+  // 2. Sync to Firestore silently in background
+  Promise.all(
+    newIds.map((id, i) => updateDoc(doc(db, 'orders', id), { sortOrder: base + i * 1000 }))
+  ).catch(() => showToast('Error al sincronizar orden'));
 }
 
 window.toggleDay = function(header) {
@@ -921,6 +933,19 @@ function refreshMonthTabs() {
     btn.onclick = () => setTab('mes-' + ym, btn);
     nav.insertBefore(btn, todosBtn);
   });
+
+  // Auto-activate current month tab on first load (when tab is still default 'todos')
+  if (currentTab === 'todos' && months.length > 0) {
+    const currentYM = dayKey(new Date()).slice(0, 7); // YYYY-MM of today
+    // Pick current month if it exists, otherwise the most recent month
+    const targetYM = months.includes(currentYM) ? currentYM : months[months.length - 1];
+    const btn = nav.querySelector(`[data-month="${targetYM}"]`);
+    if (btn) {
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      currentTab = 'mes-' + targetYM;
+    }
+  }
 }
 
 // ── FINANZAS ──
