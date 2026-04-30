@@ -214,8 +214,10 @@ main { padding:20px; max-width:680px; margin:0 auto; }
   position:relative; overflow:hidden;
 }
 .order-card:hover { box-shadow:0 4px 20px rgba(26,18,8,0.1); transform:translateY(-1px); border-color:var(--border2); }
-.order-card.drag-over { border:2px dashed var(--grass); background:var(--grass-ll); transform:none; box-shadow:none; }
+.order-card.drag-over { border:2px dashed var(--grass) !important; background:var(--grass-ll) !important; transform:none !important; box-shadow:none !important; }
+.order-card.dragging { opacity:0.35; transform:scale(0.99); transition:none; box-shadow:none !important; }
 .order-card[draggable="true"] { cursor:default; }
+.drag-placeholder { height:6px; background:var(--grass); border-radius:4px; margin:4px 0; transition:height .15s; }
 .drag-handle { cursor:grab; font-size:16px; color:var(--ink3); line-height:1; user-select:none; flex-shrink:0; padding:2px 4px; border-radius:4px; transition:color .15s; }
 .drag-handle:hover { color:var(--ink); background:var(--paper3); }
 .drag-handle:active { cursor:grabbing; }
@@ -414,7 +416,7 @@ main { padding:20px; max-width:680px; margin:0 auto; }
     </div>
   </header>
 
-  <nav class="app-nav">
+  <nav class="app-nav" id="app-nav">
     <button class="nav-tab active" onclick="setTab('todos',this)">Todos</button>
     <button class="nav-tab" onclick="setTab('hoy',this)">Hoy</button>
     <button class="nav-tab" onclick="setTab('manana',this)">Mañana</button>
@@ -559,6 +561,7 @@ function startListeners(uid) {
   const ordersQ = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
   unsubOrders = onSnapshot(ordersQ, snap => {
     orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    refreshMonthTabs();
     render();
   });
 
@@ -718,25 +721,27 @@ function render() {
       card.setAttribute('data-order-id', o.id);
       card.draggable = true;
 
-      // Drag events
+      // Drag events — smooth, only dragged card moves visually
       card.addEventListener('dragstart', e => {
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', o.id);
-        card.style.opacity = '0.4';
-        card.style.transform = 'scale(0.98)';
+        requestAnimationFrame(() => card.classList.add('dragging'));
       });
       card.addEventListener('dragend', () => {
-        card.style.opacity = '';
-        card.style.transform = '';
-        document.querySelectorAll('.order-card').forEach(c => c.classList.remove('drag-over'));
+        card.classList.remove('dragging');
+        document.querySelectorAll('.order-card.drag-over').forEach(c => c.classList.remove('drag-over'));
       });
       card.addEventListener('dragover', e => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        document.querySelectorAll('.order-card').forEach(c => c.classList.remove('drag-over'));
-        card.classList.add('drag-over');
+        if (!card.classList.contains('dragging')) {
+          document.querySelectorAll('.order-card.drag-over').forEach(c => c.classList.remove('drag-over'));
+          card.classList.add('drag-over');
+        }
       });
-      card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+      card.addEventListener('dragleave', e => {
+        if (!card.contains(e.relatedTarget)) card.classList.remove('drag-over');
+      });
       card.addEventListener('drop', async e => {
         e.preventDefault();
         card.classList.remove('drag-over');
@@ -813,6 +818,10 @@ function filterOrders() {
   const tomorrow = dayKey(new Date(Date.now()+86400000));
   const weekEnd = dayKey(new Date(Date.now()+7*86400000));
   if (currentTab==='finanzas' || currentTab==='balance') return [];
+  if (currentTab.startsWith('mes-')) {
+    const ym = currentTab.slice(4); // "YYYY-MM"
+    return orders.filter(o => o.deliveryDate && o.deliveryDate.startsWith(ym));
+  }
   switch(currentTab) {
     case 'hoy': return orders.filter(o=>o.deliveryDate===today);
     case 'manana': return orders.filter(o=>o.deliveryDate===tomorrow);
@@ -821,6 +830,36 @@ function filterOrders() {
     case 'entregado': return orders.filter(o=>o.status==='entregado');
     default: return [...orders];
   }
+}
+
+function refreshMonthTabs() {
+  // Collect unique YYYY-MM from orders with deliveryDate
+  const months = [...new Set(
+    orders
+      .filter(o => o.deliveryDate && o.deliveryDate.length >= 7)
+      .map(o => o.deliveryDate.slice(0, 7))
+  )].sort();
+
+  const nav = document.getElementById('app-nav');
+  if (!nav) return;
+
+  // Remove existing month tabs
+  nav.querySelectorAll('.month-tab').forEach(b => b.remove());
+
+  // Insert month tabs before 💰 Finanzas button
+  const finBtn = nav.querySelector('[onclick*="finanzas"]');
+  months.forEach(ym => {
+    if (nav.querySelector(`[data-month="${ym}"]`)) return; // already exists
+    const [yr, mo] = ym.split('-');
+    const label = new Date(parseInt(yr), parseInt(mo)-1, 1)
+      .toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
+    const btn = document.createElement('button');
+    btn.className = 'nav-tab month-tab';
+    btn.dataset.month = ym;
+    btn.textContent = label.charAt(0).toUpperCase() + label.slice(1);
+    btn.onclick = () => setTab('mes-' + ym, btn);
+    nav.insertBefore(btn, finBtn);
+  });
 }
 
 // ── FINANZAS ──
