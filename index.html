@@ -215,6 +215,7 @@ main { padding:20px; max-width:680px; margin:0 auto; }
 }
 .order-card:hover { box-shadow:0 4px 20px rgba(26,18,8,0.1); transform:translateY(-1px); border-color:var(--border2); }
 .order-card.sorting-active { opacity:0.35; transform:scale(0.99); box-shadow:none !important; z-index:0; }
+.sorting-in-progress .order-card { transition:none !important; transform:none !important; }
 .order-card.sort-target  { border:2px dashed var(--grass) !important; background:var(--grass-ll) !important; }
 .order-card[draggable="true"] { cursor:default; }
 .sort-ghost {
@@ -736,10 +737,8 @@ function render() {
 
       card.innerHTML = `
         <div class="card-row1">
-          <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-            <span class="drag-handle" id="dh-${o.id}">⠿</span>
-            <div class="client-name">${o.clientName||'Cliente'}</div>
-          </div>
+          <div class="client-name" style="flex:1">${o.clientName||'Cliente'}</div>
+          <span class="drag-handle" id="dh-${o.id}" style="margin:0 8px">⠿</span>
           <span class="status-pill pill-${o.status||'pendiente'}">${labelStatus(o.status)}</span>
         </div>
         ${o.product?`<div class="card-product">🧺 ${o.product}</div>`:''}
@@ -797,6 +796,7 @@ function initTouchSort(handle, card, container) {
     document.body.appendChild(ghost);
 
     card.classList.add('sorting-active');
+    container.classList.add('sorting-in-progress');
   }, { passive: false });
 
   handle.addEventListener('touchmove', e => {
@@ -832,6 +832,7 @@ function initTouchSort(handle, card, container) {
   function cleanup() {
     if (ghost) { ghost.remove(); ghost = null; }
     card.classList.remove('sorting-active');
+    container.classList.remove('sorting-in-progress');
     container.querySelectorAll('.order-card.sort-target').forEach(c => c.classList.remove('sort-target'));
   }
 
