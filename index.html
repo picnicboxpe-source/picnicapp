@@ -214,13 +214,25 @@ main { padding:20px; max-width:680px; margin:0 auto; }
   position:relative; overflow:hidden;
 }
 .order-card:hover { box-shadow:0 4px 20px rgba(26,18,8,0.1); transform:translateY(-1px); border-color:var(--border2); }
-.order-card.drag-over { border:2px dashed var(--grass) !important; background:var(--grass-ll) !important; transform:none !important; box-shadow:none !important; }
-.order-card.dragging { opacity:0.35; transform:scale(0.99); transition:none; box-shadow:none !important; }
+.order-card.sorting-active { opacity:0.35; transform:scale(0.99); box-shadow:none !important; z-index:0; }
+.order-card.sort-target  { border:2px dashed var(--grass) !important; background:var(--grass-ll) !important; }
 .order-card[draggable="true"] { cursor:default; }
-.drag-placeholder { height:6px; background:var(--grass); border-radius:4px; margin:4px 0; transition:height .15s; }
-.drag-handle { cursor:grab; font-size:16px; color:var(--ink3); line-height:1; user-select:none; flex-shrink:0; padding:2px 4px; border-radius:4px; transition:color .15s; }
-.drag-handle:hover { color:var(--ink); background:var(--paper3); }
-.drag-handle:active { cursor:grabbing; }
+.sort-ghost {
+  position:fixed; pointer-events:none; z-index:9999;
+  opacity:0.92; border-radius:var(--rr);
+  box-shadow:0 8px 30px rgba(26,18,8,0.22);
+  background:white; border:1.5px solid var(--grass);
+  transform:scale(1.02);
+  transition:none;
+}
+.drag-handle {
+  cursor:grab; font-size:18px; color:var(--ink3); line-height:1;
+  user-select:none; -webkit-user-select:none;
+  flex-shrink:0; padding:4px 6px; border-radius:4px;
+  touch-action:none;
+}
+.drag-handle:hover  { color:var(--ink); background:var(--paper3); }
+.drag-handle:active { cursor:grabbing; color:var(--grass); }
 .order-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:4px; border-radius:20px 0 0 20px; }
 .order-card.s-pendiente::before { background:var(--sun); }
 .order-card.s-confirmado::before { background:var(--sky); }
@@ -418,8 +430,6 @@ main { padding:20px; max-width:680px; margin:0 auto; }
 
   <nav class="app-nav" id="app-nav">
     <button class="nav-tab active" onclick="setTab('todos',this)">Todos</button>
-    <button class="nav-tab" onclick="setTab('hoy',this)">Hoy</button>
-    <button class="nav-tab" onclick="setTab('manana',this)">Mañana</button>
     <button class="nav-tab" onclick="setTab('semana',this)">Esta semana</button>
     <button class="nav-tab" onclick="setTab('entregado',this)">Entregados</button>
     <button class="nav-tab" onclick="setTab('finanzas',this)">💰 Finanzas</button>
@@ -721,39 +731,12 @@ function render() {
       card.setAttribute('data-order-id', o.id);
       card.draggable = true;
 
-      // Drag events — smooth, only dragged card moves visually
-      card.addEventListener('dragstart', e => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', o.id);
-        requestAnimationFrame(() => card.classList.add('dragging'));
-      });
-      card.addEventListener('dragend', () => {
-        card.classList.remove('dragging');
-        document.querySelectorAll('.order-card.drag-over').forEach(c => c.classList.remove('drag-over'));
-      });
-      card.addEventListener('dragover', e => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        if (!card.classList.contains('dragging')) {
-          document.querySelectorAll('.order-card.drag-over').forEach(c => c.classList.remove('drag-over'));
-          card.classList.add('drag-over');
-        }
-      });
-      card.addEventListener('dragleave', e => {
-        if (!card.contains(e.relatedTarget)) card.classList.remove('drag-over');
-      });
-      card.addEventListener('drop', async e => {
-        e.preventDefault();
-        card.classList.remove('drag-over');
-        const draggedId = e.dataTransfer.getData('text/plain');
-        if (draggedId === o.id) return;
-        await reorderCard(draggedId, o.id, body);
-      });
+      // Touch sort — attach to drag handle only
 
       card.innerHTML = `
         <div class="card-row1">
           <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-            <span class="drag-handle" title="Arrastrar para reordenar" onclick="event.stopPropagation()">⠿</span>
+            <span class="drag-handle" id="dh-${o.id}">⠿</span>
             <div class="client-name">${o.clientName||'Cliente'}</div>
           </div>
           <span class="status-pill pill-${o.status||'pendiente'}">${labelStatus(o.status)}</span>
@@ -767,34 +750,111 @@ function render() {
         ${o.address?`<div style="font-size:12px;color:var(--ink3);margin-top:6px;padding-left:8px;display:flex;align-items:flex-start;gap:4px"><span>📍</span><span>${o.address}</span></div>`:''}
         ${o.extras?`<div style="font-size:12px;color:var(--ink2);margin-top:4px;padding-left:8px;display:flex;align-items:flex-start;gap:4px"><span>✨</span><span>${o.extras}</span></div>`:''}`;
 
-      // Open detail only if not dragging
+      // Open detail on tap (not during sort)
       card.addEventListener('click', () => {
-        if (card.dataset.dragging !== 'true') openDetail(o.id);
+        if (!card.classList.contains('sorting-active')) openDetail(o.id);
       });
 
       body.appendChild(card);
+
+      // Attach touch sort to handle after card is in DOM
+      requestAnimationFrame(() => {
+        const handle = document.getElementById('dh-' + o.id);
+        if (handle) initTouchSort(handle, card, body);
+      });
     });
 
     el.appendChild(div);
   });
 }
 
-// ── DRAG & DROP REORDER ──
+// ── TOUCH SORT ENGINE ──
+function initTouchSort(handle, card, container) {
+  let ghost = null;
+  let startY = 0;
+  let offsetY = 0;
+  let cardH = 0;
+  let currentTarget = null;
+
+  handle.addEventListener('touchstart', e => {
+    e.stopPropagation();
+    const t = e.touches[0];
+    startY  = t.clientY;
+    cardH   = card.getBoundingClientRect().height;
+    offsetY = t.clientY - card.getBoundingClientRect().top;
+
+    // Create ghost clone
+    const rect = card.getBoundingClientRect();
+    ghost = card.cloneNode(true);
+    ghost.className = 'order-card sort-ghost';
+    ghost.style.width  = rect.width + 'px';
+    ghost.style.height = rect.height + 'px';
+    ghost.style.top    = rect.top + 'px';
+    ghost.style.left   = rect.left + 'px';
+    document.body.appendChild(ghost);
+
+    card.classList.add('sorting-active');
+  }, { passive: true });
+
+  handle.addEventListener('touchmove', e => {
+    if (!ghost) return;
+    e.preventDefault();  // prevent scroll while sorting
+    const t = e.touches[0];
+    const newTop = t.clientY - offsetY;
+    ghost.style.top = newTop + 'px';
+
+    // Find which card we're hovering over
+    ghost.style.display = 'none';
+    const el = document.elementFromPoint(t.clientX, t.clientY);
+    ghost.style.display = '';
+    const target = el ? el.closest('.order-card[data-order-id]') : null;
+
+    container.querySelectorAll('.order-card.sort-target').forEach(c => c.classList.remove('sort-target'));
+    if (target && target !== card) {
+      target.classList.add('sort-target');
+      currentTarget = target;
+    } else {
+      currentTarget = null;
+    }
+
+    // Auto-scroll: if near top or bottom edge of viewport, scroll the page
+    const scrollZone = 80;
+    if (t.clientY < scrollZone) {
+      window.scrollBy({ top: -10, behavior: 'instant' });
+    } else if (t.clientY > window.innerHeight - scrollZone) {
+      window.scrollBy({ top: 10, behavior: 'instant' });
+    }
+  }, { passive: false });
+
+  handle.addEventListener('touchend', async () => {
+    if (!ghost) return;
+    ghost.remove();
+    ghost = null;
+    card.classList.remove('sorting-active');
+    container.querySelectorAll('.order-card.sort-target').forEach(c => c.classList.remove('sort-target'));
+
+    if (currentTarget) {
+      const draggedId = card.dataset.orderId;
+      const targetId  = currentTarget.dataset.orderId;
+      if (draggedId && targetId && draggedId !== targetId) {
+        await reorderCard(draggedId, targetId, container);
+      }
+    }
+    currentTarget = null;
+  }, { passive: true });
+}
+
 async function reorderCard(draggedId, targetId, container) {
-  // Get all card IDs in current DOM order within this container
   const cards = [...container.querySelectorAll('.order-card[data-order-id]')];
-  // Build new order: insert dragged before target
   const ids = cards.map(c => c.dataset.orderId);
   const fromIdx = ids.indexOf(draggedId);
   const toIdx   = ids.indexOf(targetId);
   if (fromIdx === -1 || toIdx === -1) return;
 
-  // Reorder array
   const newIds = [...ids];
   newIds.splice(fromIdx, 1);
   newIds.splice(toIdx, 0, draggedId);
 
-  // Assign new sortOrder values spaced by 1000 to allow future inserts
   const base = Date.now();
   try {
     await Promise.all(
@@ -846,10 +906,11 @@ function refreshMonthTabs() {
   // Remove existing month tabs
   nav.querySelectorAll('.month-tab').forEach(b => b.remove());
 
-  // Insert month tabs before 💰 Finanzas button
-  const finBtn = nav.querySelector('[onclick*="finanzas"]');
-  months.forEach(ym => {
-    if (nav.querySelector(`[data-month="${ym}"]`)) return; // already exists
+  // Insert month tabs at the BEGINNING, before "Todos"
+  const todosBtn = nav.querySelector('[onclick*="todos"]');
+  // Sort months descending so most recent is first
+  [...months].reverse().forEach(ym => {
+    if (nav.querySelector(`[data-month="${ym}"]`)) return;
     const [yr, mo] = ym.split('-');
     const label = new Date(parseInt(yr), parseInt(mo)-1, 1)
       .toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
@@ -858,7 +919,7 @@ function refreshMonthTabs() {
     btn.dataset.month = ym;
     btn.textContent = label.charAt(0).toUpperCase() + label.slice(1);
     btn.onclick = () => setTab('mes-' + ym, btn);
-    nav.insertBefore(btn, finBtn);
+    nav.insertBefore(btn, todosBtn);
   });
 }
 
@@ -1257,38 +1318,46 @@ window.verHistorialCierres = async function() {
 
 // ── RUTA DE REPARTO ──
 window.verRuta = function() {
-  const ORIGEN = 'Av. General Mendiburu 935, Miraflores, Lima';
-  const MAX_PARADAS = 10;
+  // Punto de partida — NO se incluye como waypoint, solo como origen
+  const ORIGEN = encodeURIComponent('Av. General Mendiburu 935, Miraflores, Lima');
+  const MAX_PARADAS = 9; // Google Maps allows max 10 waypoints including origin
 
-  // Pedidos del día actual, no entregados, no cerrados, con dirección
   const today = dayKey(new Date());
-  const paraRuta = orders.filter(o => {
+
+  // Filter: pending, not closed, has address, delivery date = today
+  const candidatos = orders.filter(o => {
     if (o.status === 'entregado') return false;
     if (o.cerrado) return false;
-    if (!o.address) return false;
-    // Comparar fecha del pedido con hoy
+    if (!o.address || !o.address.trim()) return false;
     if (!o.deliveryDate) return false;
-    const fechaPedido = typeof o.deliveryDate === 'string'
+    const fecha = typeof o.deliveryDate === 'string'
       ? o.deliveryDate.slice(0, 10)
       : dayKey(new Date(o.deliveryDate.toDate ? o.deliveryDate.toDate() : o.deliveryDate));
-    return fechaPedido === today;
+    return fecha === today;
   });
 
-  if (paraRuta.length === 0) {
-    showToast('No hay pedidos de hoy pendientes con dirección');
+  if (candidatos.length === 0) {
+    showToast('No hay pedidos de hoy pendientes con dirección registrada');
     return;
   }
 
-  // Limitar a 10 paradas
-  const paradas = paraRuta.slice(0, MAX_PARADAS);
-  if (paraRuta.length > MAX_PARADAS) {
-    showToast(`Mostrando ${MAX_PARADAS} de ${paraRuta.length} pedidos`);
+  const paradas = candidatos.slice(0, MAX_PARADAS);
+  if (candidatos.length > MAX_PARADAS) {
+    showToast('Mostrando ' + MAX_PARADAS + ' de ' + candidatos.length + ' pedidos');
   }
 
-  // Construir URL de Google Maps
-  const encode = str => encodeURIComponent(str.trim());
-  const segmentos = [encode(ORIGEN), ...paradas.map(o => encode(o.address))];
-  const url = 'https://www.google.com/maps/dir/' + segmentos.join('/');
+  // Build Google Maps URL: origin/waypoint1/waypoint2/.../destination
+  // Destination = last stop (or origin if only 1 stop)
+  const waypoints = paradas.map(o => encodeURIComponent(o.address.trim()));
+
+  let url;
+  if (waypoints.length === 1) {
+    // origin → single destination
+    url = 'https://www.google.com/maps/dir/' + ORIGEN + '/' + waypoints[0];
+  } else {
+    // origin → all waypoints in order
+    url = 'https://www.google.com/maps/dir/' + ORIGEN + '/' + waypoints.join('/');
+  }
 
   window.open(url, '_blank');
 };
@@ -1346,9 +1415,12 @@ function parseLocal(raw) {
     const m = t.match(labelRe);
     if (!m) return null;
     const after = t.slice(m.index + m[0].length);
-    const stop = after.search(/\n[A-ZÁÉÍÓÚÜÑa-záéíóúüñ][^\n]{0,50}:/);
+    // Stop at next field label: a line that starts with word(s) followed by colon
+    // Allow multiline content (paragraphs) within the same field
+    const stop = after.search(/\n[A-ZÁÉÍÓÚÜÑa-záéíóúüñ][\wÁÉÍÓÚÜÑáéíóúüñ\s]{0,60}:/m);
     const block = stop >= 0 ? after.slice(0, stop) : after;
-    return block.trim() || null;
+    // Preserve internal line breaks, just trim edges
+    return block.replace(/^\s+|\s+$/g, '') || null;
   }
 
   // DATE
