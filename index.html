@@ -510,6 +510,7 @@ let parsedDraft = null;
 let editandoId = null;   // ID del pedido en edición (null = modo creación)
 let unsubOrders = null;
 let unsubExpenses = null;
+let sortingInProgress = false;  // blocks onSnapshot re-render during drag
 
 // ── AUTH ──
 window.doLogin = async function() {
@@ -572,9 +573,12 @@ function startListeners(uid) {
   // Orders — real-time
   const ordersQ = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
   unsubOrders = onSnapshot(ordersQ, snap => {
+    // Always update memory so data is fresh
     orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     refreshMonthTabs();
-    render();
+    // Skip re-render while drag sort is writing to Firestore
+    // to prevent the full DOM rebuild that causes the animation flash
+    if (!sortingInProgress) render();
   });
 
   // Expenses — real-time
@@ -797,6 +801,7 @@ function initTouchSort(handle, card, container) {
 
     card.classList.add('sorting-active');
     container.classList.add('sorting-in-progress');
+    sortingInProgress = true;
   }, { passive: false });
 
   handle.addEventListener('touchmove', e => {
@@ -834,6 +839,8 @@ function initTouchSort(handle, card, container) {
     card.classList.remove('sorting-active');
     container.classList.remove('sorting-in-progress');
     container.querySelectorAll('.order-card.sort-target').forEach(c => c.classList.remove('sort-target'));
+    // If touch ended without a valid drop, release the block immediately
+    setTimeout(() => { sortingInProgress = false; }, 100);
   }
 
   handle.addEventListener('touchend', async e => {
@@ -888,7 +895,14 @@ async function reorderCard(draggedId, targetId, container) {
   // 3. Sync to Firestore silently in background — no render() call needed
   Promise.all(
     newIds.map((id, i) => updateDoc(doc(db, 'orders', id), { sortOrder: base + i * 1000 }))
-  ).catch(() => showToast('Error al sincronizar orden'));
+  ).then(() => {
+    // Short buffer so the onSnapshot that Firestore triggers
+    // (from our own writes) is also ignored, then re-enable
+    setTimeout(() => { sortingInProgress = false; }, 600);
+  }).catch(() => {
+    sortingInProgress = false;
+    showToast('Error al sincronizar orden');
+  });
 }
 
 window.toggleDay = function(header) {
