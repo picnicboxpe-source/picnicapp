@@ -218,12 +218,13 @@ main { padding:20px; max-width:680px; margin:0 auto; }
 .order-card.sort-target  { border:2px dashed var(--grass) !important; background:var(--grass-ll) !important; }
 .order-card[draggable="true"] { cursor:default; }
 .sort-ghost {
-  position:fixed; pointer-events:none; z-index:9999;
+  position:absolute; pointer-events:none; z-index:9999;
   opacity:0.92; border-radius:var(--rr);
   box-shadow:0 8px 30px rgba(26,18,8,0.22);
   background:white; border:1.5px solid var(--grass);
   transform:scale(1.02);
   transition:none;
+  will-change:top;
 }
 .drag-handle {
   cursor:grab; font-size:18px; color:var(--ink3); line-height:1;
@@ -777,30 +778,32 @@ function initTouchSort(handle, card, container) {
   let currentTarget = null;
 
   handle.addEventListener('touchstart', e => {
+    e.preventDefault();       // block scroll/tap-highlight from first touch
     e.stopPropagation();
     const t = e.touches[0];
     startY  = t.clientY;
     cardH   = card.getBoundingClientRect().height;
     offsetY = t.clientY - card.getBoundingClientRect().top;
 
-    // Create ghost clone
+    // Create ghost clone positioned exactly over the card
     const rect = card.getBoundingClientRect();
     ghost = card.cloneNode(true);
     ghost.className = 'order-card sort-ghost';
     ghost.style.width  = rect.width + 'px';
     ghost.style.height = rect.height + 'px';
-    ghost.style.top    = rect.top + 'px';
+    ghost.style.top    = (rect.top + window.scrollY) + 'px';
     ghost.style.left   = rect.left + 'px';
+    ghost.style.position = 'absolute';
     document.body.appendChild(ghost);
 
     card.classList.add('sorting-active');
-  }, { passive: true });
+  }, { passive: false });
 
   handle.addEventListener('touchmove', e => {
     if (!ghost) return;
     e.preventDefault();  // prevent scroll while sorting
     const t = e.touches[0];
-    const newTop = t.clientY - offsetY;
+    const newTop = t.clientY + window.scrollY - offsetY;
     ghost.style.top = newTop + 'px';
 
     // Find which card we're hovering over
@@ -863,15 +866,25 @@ async function reorderCard(draggedId, targetId, container) {
   newIds.splice(fromIdx, 1);
   newIds.splice(toIdx, 0, draggedId);
 
+  // 1. Move DOM nodes directly — zero reflow, instant, no lag
+  const draggedEl = cards[fromIdx];
+  const targetEl  = cards[toIdx];
+  if (fromIdx < toIdx) {
+    // moving down: insert after target
+    targetEl.after(draggedEl);
+  } else {
+    // moving up: insert before target
+    targetEl.before(draggedEl);
+  }
+
+  // 2. Update local sortOrder in memory (so re-renders keep the order)
   const base = Date.now();
-  // 1. Update local memory immediately → instant visual update, no flash
   newIds.forEach((id, i) => {
     const o = orders.find(x => x.id === id);
     if (o) o.sortOrder = base + i * 1000;
   });
-  render(); // instant, no waiting for Firestore
 
-  // 2. Sync to Firestore silently in background
+  // 3. Sync to Firestore silently in background — no render() call needed
   Promise.all(
     newIds.map((id, i) => updateDoc(doc(db, 'orders', id), { sortOrder: base + i * 1000 }))
   ).catch(() => showToast('Error al sincronizar orden'));
