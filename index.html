@@ -1453,9 +1453,11 @@ window.analyzeMessage = async function() {
 // ── PARSER ──
 function parseLocal(raw) {
   const t = raw.trim();
+  const lines = t.split('\n').map(l => l.trim()).filter(Boolean);
   const notes = [];
   let confidence = 'high';
 
+  // Extract value after a label on the same line
   function extract(patterns) {
     for (const pat of patterns) {
       const m = t.match(pat);
@@ -1464,137 +1466,214 @@ function parseLocal(raw) {
     return null;
   }
 
+  // Extract multiline block after a label, stopping at next label-like line
   function extractBlock(labelRe) {
     const m = t.match(labelRe);
     if (!m) return null;
     const after = t.slice(m.index + m[0].length);
-    // Stop at next field label: a line that starts with word(s) followed by colon
-    // Allow multiline content (paragraphs) within the same field
     const stop = after.search(/\n[A-ZÁÉÍÓÚÜÑa-záéíóúüñ][\wÁÉÍÓÚÜÑáéíóúüñ\s]{0,60}:/m);
     const block = stop >= 0 ? after.slice(0, stop) : after;
-    // Preserve internal line breaks, just trim edges
     return block.replace(/^\s+|\s+$/g, '') || null;
   }
 
-  // DATE
+  // Find first line matching a regex
+  function lineMatch(re) {
+    for (const l of lines) {
+      const m = l.match(re);
+      if (m) return m;
+    }
+    return null;
+  }
+
+  // Get clean value after "Label:" on a line
+  function afterColon(line) {
+    const i = line.indexOf(':');
+    return i >= 0 ? line.slice(i+1).trim() : line.trim();
+  }
+
+  // ── DATE — labeled OR standalone on any line ──
+  const today = new Date(); today.setHours(0,0,0,0);
+  const addDays = (d,n) => { const x=new Date(d); x.setDate(x.getDate()+n); return x; };
+  const toISO  = d => d.toISOString().slice(0,10);
+  const dayNames = ['domingo','lunes','martes','miercoles','jueves','viernes','sabado'];
+  const monthsMap = {enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,octubre:10,noviembre:11,diciembre:12};
+
+  function parseAnyDate(s) {
+    const l = s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    if (/pasado manana/.test(l)) return toISO(addDays(today,2));
+    if (/manana/.test(l))        return toISO(addDays(today,1));
+    if (/\bhoy\b/.test(l))       return toISO(today);
+    for (let i=0;i<dayNames.length;i++) {
+      if (new RegExp('\\b'+dayNames[i]+'\\b').test(l)) {
+        let diff = i - today.getDay(); if(diff<=0)diff+=7;
+        return toISO(addDays(today,diff));
+      }
+    }
+    // DD/MM or DD-MM (e.g. 29/04)
+    const sM = s.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\s*$/);
+    if (sM) {
+      const yr = sM[3] ? parseInt(sM[3])+(sM[3].length===2?2000:0) : today.getFullYear();
+      const d  = new Date(yr, parseInt(sM[2])-1, parseInt(sM[1]));
+      if (d < today && !sM[3]) d.setFullYear(today.getFullYear()+1);
+      return toISO(d);
+    }
+    // DD/MM anywhere in string
+    const sM2 = s.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+    if (sM2) {
+      const yr = sM2[3] ? parseInt(sM2[3])+(sM2[3].length===2?2000:0) : today.getFullYear();
+      const d  = new Date(yr, parseInt(sM2[2])-1, parseInt(sM2[1]));
+      if (d < today && !sM2[3]) d.setFullYear(today.getFullYear()+1);
+      return toISO(d);
+    }
+    // "15 de junio" / "15 junio"
+    const mM = l.match(/(\d{1,2})\s+(?:de\s+)?([a-z]+)/);
+    if (mM && monthsMap[mM[2]]) {
+      const d = new Date(today.getFullYear(), monthsMap[mM[2]]-1, parseInt(mM[1]));
+      if (d < today) d.setFullYear(today.getFullYear()+1);
+      return toISO(d);
+    }
+    return null;
+  }
+
   let deliveryDate = null;
+  // Try labeled first
   const dateRaw = extract([/(?:fecha de entrega|fecha|entrega)\s*:?\s*([^\n]{3,30})/i]);
-  if (dateRaw) {
-    const l = dateRaw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-    const dayNames = ['domingo','lunes','martes','miercoles','jueves','viernes','sabado'];
-    const today = new Date(); today.setHours(0,0,0,0);
-    const addDays = (d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); return x; };
-    const toISO = d=>d.toISOString().slice(0,10);
-    if (/pasado manana/.test(l)) deliveryDate=toISO(addDays(today,2));
-    else if (/manana|mañana/.test(l)) deliveryDate=toISO(addDays(today,1));
-    else if (/hoy/.test(l)) deliveryDate=toISO(today);
-    if (!deliveryDate) {
-      for (let i=0;i<dayNames.length;i++) {
-        if (new RegExp('\\b'+dayNames[i]+'\\b').test(l)) {
-          let diff=i-today.getDay(); if(diff<=0)diff+=7;
-          deliveryDate=toISO(addDays(today,diff)); break;
-        }
-      }
-    }
-    if (!deliveryDate) {
-      const sM=dateRaw.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-      if (sM) {
-        const yr=sM[3]?parseInt(sM[3])+(sM[3].length===2?2000:0):today.getFullYear();
-        const d=new Date(yr,parseInt(sM[2])-1,parseInt(sM[1]));
-        if(d<today&&!sM[3])d.setFullYear(today.getFullYear()+1);
-        deliveryDate=toISO(d);
-      }
-    }
-    if (!deliveryDate) {
-      const months={enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,octubre:10,noviembre:11,diciembre:12};
-      const mM=l.match(/(\d{1,2})\s+de\s+([a-z]+)/);
-      if(mM&&months[mM[2]]){
-        const today2=new Date(); today2.setHours(0,0,0,0);
-        const d=new Date(today2.getFullYear(),months[mM[2]]-1,parseInt(mM[1]));
-        if(d<today2)d.setFullYear(today2.getFullYear()+1);
-        deliveryDate=d.toISOString().slice(0,10);
-      }
+  if (dateRaw) deliveryDate = parseAnyDate(dateRaw);
+  // Fallback: scan each line looking for a standalone date
+  if (!deliveryDate) {
+    for (const l of lines) {
+      const d = parseAnyDate(l);
+      if (d) { deliveryDate = d; break; }
     }
   }
   if (!deliveryDate) { notes.push('No se detectó fecha'); confidence='medium'; }
 
-  const timeRange = extract([/(?:rango horario|rango|horario|hora de entrega)\s*:?\s*([^\n]{3,30})/i]);
-
-  let product = extract([/(?:nombre del? box|box|producto|prod|caja|canasta)\s*:?\s*([^\n]{2,60})/i]);
-  if (product) {
-    product = product.trim();
-    if (/^box\s+/i.test(product)) product = 'Box ' + product.replace(/^box\s+/i,'').charAt(0).toUpperCase() + product.replace(/^box\s+/i,'').slice(1);
-    else product = 'Box ' + product.charAt(0).toUpperCase() + product.slice(1);
+  // ── TIME RANGE — labeled OR bare time pattern on any line ──
+  let timeRange = extract([/(?:rango horario|rango|horario|hora de entrega|hora de recojo|hora)\s*:?\s*([^\n]{3,30})/i]);
+  if (!timeRange) {
+    // Look for lines with time patterns: "3/30-4", "3:30pm", "entre 3 y 4", "alrededor de las 3"
+    const timeLine = lineMatch(/(?:alrededor de las?|entre|de|a las?)?\s*(\d{1,2}(?:[:\/]\d{2})?\s*(?:am|pm|hrs?)?)\s*(?:[-–a]\s*(\d{1,2}(?:[:\/]\d{2})?\s*(?:am|pm|hrs?)?))?.{0,10}$/i);
+    if (timeLine) timeRange = timeLine[0].trim();
+    // Normalize "3/30" → "3:30"
+    if (timeRange) timeRange = timeRange.replace(/(\d)\/( \d{2})/, '$1:$2').replace(/(\d)\/(\d{2})/, '$1:$2');
   }
 
+  // ── PRODUCT — labeled OR any line containing box/product keywords ──
+  let product = extract([/(?:nombre del? box|box|producto|prod|caja|canasta)\s*:?\s*([^\n]{2,60})/i]);
+  if (!product) {
+    // Look for lines that mention promo/box/morning/noche/etc. not as labels
+    for (const l of lines) {
+      if (/\b(promo|morning|noche|desayuno|tarde|cena|box|romantic|baby|especial)\b/i.test(l) && !/^(fecha|total|precio|dir|ref|mens|recoj)/i.test(l)) {
+        product = l.trim(); break;
+      }
+    }
+  }
+  if (product) {
+    product = product.trim();
+    // Remove parenthetical clarifications like "(morning 2)" → keep whole thing clean
+    if (/^box\s+/i.test(product)) product = 'Box ' + product.replace(/^box\s+/i,'').charAt(0).toUpperCase() + product.replace(/^box\s+/i,'').slice(1);
+    else if (!/^box/i.test(product)) product = 'Box ' + product.charAt(0).toUpperCase() + product.slice(1);
+    else product = product.charAt(0).toUpperCase() + product.slice(1);
+  }
+
+  // ── EXTRAS: cinta + frase + sin frase + adicionales ──
   const extraParts = [];
   const cinta = extract([/(?:color de cinta|cinta|cin)\s*:?\s*([^\n]{1,40})/i]);
   if (cinta) extraParts.push('Cinta: ' + cinta);
+
   const fraseTapa = extract([/frase en tapa[^\n]{0,60}?:\s*([^\n]{1,200})/i, /frase\s*:?\s*([^\n]{1,200})/i]);
-  if (fraseTapa) extraParts.push('Frase en tapa: ' + fraseTapa);
+  if (fraseTapa) {
+    if (/sin frase|no frase|ninguna/i.test(fraseTapa)) extraParts.push('Sin frase en tapa');
+    else extraParts.push('Frase en tapa: ' + fraseTapa);
+  } else if (/sin frase|no frase/i.test(t)) {
+    extraParts.push('Sin frase en tapa');
+  }
+
   const adicionales = extract([/(?:extras?|adicional(?:es)?)\s*:?\s*([^\n]{2,120})/i]);
   if (adicionales) extraParts.push(adicionales);
   const extras = extraParts.length ? extraParts.join('  ·  ') : null;
 
-  // ── Quien envía — acepta: "Persona que envía:", "Envía:", "Envia:", "Env:", "Cliente:"
+  // ── DETECT RECOJO ──
+  const isRecojo = /\brecoj[eo]\b/i.test(t);
+
+  // ── SENDER — labeled OR "Recoge:", "Nombre:" for recojo orders ──
   const clientName = extract([
     /persona que env[íi]a\s*:?\s*([^\n]{2,60})/i,
     /quien env[íi]a\s*:?\s*([^\n]{2,60})/i,
     /env[íi]a\s*:?\s*([^\n]{2,60})/i,
-    /env\s*:?\s*([^\n]{2,60})/i,
+    /env\s*:\s*([^\n]{2,60})/i,
     /comprador\s*:?\s*([^\n]{2,60})/i,
     /cliente\s*:?\s*([^\n]{2,60})/i,
+    /recoge\s*:\s*([^\n]{2,60})/i,   // recojo format
+    /recoge\s*:\s*([^\n]{2,60})/i,
+    /nombre\s*:\s*([^\n]{2,60})/i,
   ]);
 
-  // ── Quien recibe — acepta: "Persona que recibe:", "Recibe:", "Rec:", "Destinatario:"
+  // ── RECIPIENT — labeled only ──
   const recipientName = extract([
     /persona que recibe\s*:?\s*([^\n]{2,60})/i,
     /destinatario\s*:?\s*([^\n]{2,60})/i,
-    /recibe\s*:?\s*([^\n]{2,60})/i,
-    /rec\s*:?\s*([^\n]{2,60})/i,
-    /para\s*:?\s*([^\n]{2,60})/i,
+    /recibe\s*:\s*([^\n]{2,60})/i,
+    /rec\s*:\s*([^\n]{2,60})/i,
+    /para\s*:\s*([^\n]{2,60})/i,
   ]);
 
-  // ── Dirección — acepta: "Dirección de entrega:", "Dirección:", "Dir:", "Domicilio:"
+  // ── ADDRESS ──
   const address = extract([
     /direcci[oó]n de entrega\s*:?\s*([^\n]{4,120})/i,
     /direcci[oó]n\s*:?\s*([^\n]{4,120})/i,
     /domicilio\s*:?\s*([^\n]{4,120})/i,
-    /dir\s*:?\s*([^\n]{4,120})/i,
+    /dir\s*:\s*([^\n]{4,120})/i,
+    /entrega en\s*:?\s*([^\n]{4,120})/i,
   ]);
 
-  // ── Referencia — acepta: "Referencia:", "Ref:"
+  // ── REFERENCE ──
   const reference = extract([
     /referencia\s*:?\s*([^\n]{2,100})/i,
-    /ref\s*:?\s*([^\n]{2,100})/i,
+    /ref\s*:\s*([^\n]{2,100})/i,
   ]);
 
-  // ── Tel quien envía — acepta versión larga o corta
-  const phoneRaw = extract([
+  // ── PHONES — labeled first, then all 9-digit numbers in order ──
+  // Collect ALL 9-digit Peruvian numbers found in text, in order of appearance
+  const allPhones = [...t.matchAll(/(?<!\d)(9\d{8})(?!\d)/g)].map(m => m[1]);
+
+  const phoneLabeled = extract([
     /n[uú]mero de contacto de (?:la )?persona que env[íi]a\s*:?\s*([\d\s\+\-]{7,15})/i,
     /tel[eé]fono de quien env[íi]a\s*:?\s*([\d\s\+\-]{7,15})/i,
-    /n[uú]mero de contacto de (?:la )?persona que env[íi][ao]\s*:?\s*([\d\s\+\-]{7,15})/i,
     /tel quien env[íi]a\s*:?\s*([\d\s\+\-]{7,15})/i,
+    /n[uú]mero de quien env[íi]a\s*:?\s*([\d\s\+\-]{7,15})/i,
+    // recojo: "Numero 915138599" → sender phone
+    /n[uú]mero\s*:?\s*([\d\s\+\-]{7,12})/i,
   ]);
-  const phone = phoneRaw ? phoneRaw.replace(/\s+/g,'') : null;
+  // First number in text = sender phone (always)
+  const phone = phoneLabeled ? phoneLabeled.replace(/\s+/g,'') : (allPhones[0] || null);
 
-  // ── Tel quien recibe — acepta versión larga o corta
-  const recPhoneRaw = extract([
+  const recPhoneLabeled = extract([
     /n[uú]mero de contacto de (?:la )?persona que recibe\s*:?\s*([\d\s\+\-]{7,15})/i,
     /tel[eé]fono de quien recibe\s*:?\s*([\d\s\+\-]{7,15})/i,
     /n[uú]mero de contacto de (?:la )?persona que recib[ae]\s*:?\s*([\d\s\+\-]{7,15})/i,
     /tel quien recibe\s*:?\s*([\d\s\+\-]{7,15})/i,
   ]);
-  const recipientPhone = recPhoneRaw ? recPhoneRaw.replace(/\s+/g,'') : null;
+  // Second distinct number = recipient phone (only if explicitly a second number)
+  const recipientPhone = recPhoneLabeled
+    ? recPhoneLabeled.replace(/\s+/g,'')
+    : (allPhones.length >= 2 ? allPhones[1] : null);
 
-  // ── Mensaje para tarjeta — acepta: "Mensaje para la tarjeta:", "Mensaje:", "Msg:"
+  // ── CARD MESSAGE ──
   let cardMessage = extractBlock(/mensaje para la tarjeta\s*:?[ \t]*/i);
+  if (!cardMessage) cardMessage = extractBlock(/dedicatoria\s*:?[ \t]*/i);
   if (!cardMessage) cardMessage = extractBlock(/mensaje\s*:?[ \t]*/i);
   if (!cardMessage) cardMessage = extractBlock(/msg\s*:?[ \t]*/i);
+  // "Dedicatoria pendiente" → mark as pending, don't leave null
+  if (!cardMessage && /dedicatoria pendiente|mensaje pendiente/i.test(t)) {
+    cardMessage = '(pendiente)';
+  }
 
+  // ── PRICE ──
   const precioRaw = extract([
     /total\s*:?\s*(?:S\/)?\s*([\d]+(?:[.,]\d{1,2})?)/i,
     /precio\s*:?\s*(?:S\/)?\s*([\d]+(?:[.,]\d{1,2})?)/i,
+    /costo\s*:?\s*(?:S\/)?\s*([\d]+(?:[.,]\d{1,2})?)/i,
   ]);
   const precio = precioRaw ? precioRaw.replace(',','.') : null;
 
