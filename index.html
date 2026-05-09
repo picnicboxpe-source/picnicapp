@@ -442,7 +442,6 @@ main { padding:20px; max-width:680px; margin:0 auto; }
 
   <nav class="app-nav" id="app-nav">
     <button class="nav-tab active" onclick="setTab('todos',this)">Todos</button>
-    <button class="nav-tab" onclick="setTab('produccion',this)">📦 Producción</button>
     <button class="nav-tab" onclick="setTab('semana',this)">Esta semana</button>
     <button class="nav-tab" onclick="setTab('entregado',this)">Entregados</button>
     <button class="nav-tab" onclick="setTab('finanzas',this)">💰 Finanzas</button>
@@ -589,8 +588,6 @@ function startListeners(uid) {
     refreshMonthTabs();
     if (!sortingInProgress) {
       render();
-    } else if (currentTab === 'produccion') {
-      renderProduccion();
     }
   });
 
@@ -653,7 +650,6 @@ function render() {
   if (!el) return;
   if (currentTab === 'finanzas')  { renderFinanzas();  return; }
   if (currentTab === 'balance')   { renderBalance();   return; }
-  if (currentTab === 'produccion'){ renderProduccion(); return; }
   let list = filterOrders();
 
   const today = dayKey(new Date());
@@ -737,70 +733,135 @@ function render() {
     const body = div.querySelector('.day-body');
     body.dataset.dayKey = k;
 
-    // ── Box summary — normalized by code (O1/01, O2/02, etc.) ──
+    // ── Box summary — multi-box, multi-quantity per pedido ──
     function normalizeBoxCode(raw) {
       if (!raw) return null;
       const s = raw.trim();
-
-      // 1. Promo: keep full text
       if (/^\s*promo\b/i.test(s)) return s;
-
-      // 2. Named special models — specific combos before generic names
       const specials = [
-        [/mam[aá]\s*relax/i,                    'Box Mamá Relax'],
-        [/mam[aá]\s*y\s*beb[eé]/i,              'Box Mamá y Bebé'],
-        [/mam[aá]\s*chef/i,                     'Box Mamá Chef'],
-        [/mam[aá]\s*fit/i,                      'Box Mamá Fit'],
-        [/mam[aá]\s*zen/i,                      'Box Mamá Zen'],
-        [/mam[aá]\s*glow/i,                     'Box Mamá Glow'],
-        [/mam[aá]/i,                            'Box Mamá'],
-        [/desayuno\s*premium/i,                 'Box Desayuno Premium'],
-        [/desayuno/i,                           'Box Desayuno'],
-        [/rom[aá]ntic[ao]?\s*premium/i,         'Box Romántico Premium'],
-        [/rom[aá]ntic[ao]?/i,                   'Box Romántico'],
-        [/baby\s*shower/i,                      'Box Baby Shower'],
-        [/baby/i,                               'Box Baby'],
-        [/cumplea[nñ]os/i,                      'Box Cumpleaños'],
-        [/morning/i,                            'Box Morning'],
-        [/noche/i,                              'Box Noche'],
-        [/relax/i,                              'Box Relax'],
-        [/premium/i,                            'Box Premium'],
-        [/corporate|empresarial/i,              'Box Corporativo'],
+        [/mam[aá]\s*relax/i,                   'Box Mamá Relax'],
+        [/mam[aá]\s*y\s*beb[eé]/i,             'Box Mamá y Bebé'],
+        [/mam[aá]\s*chef/i,                    'Box Mamá Chef'],
+        [/mam[aá]\s*fit/i,                     'Box Mamá Fit'],
+        [/mam[aá]\s*zen/i,                     'Box Mamá Zen'],
+        [/mam[aá]\s*glow/i,                    'Box Mamá Glow'],
+        [/mam[aá]/i,                           'Box Mamá'],
+        [/desayuno\s*premium/i,                'Box Desayuno Premium'],
+        [/desayuno/i,                          'Box Desayuno'],
+        [/rom[aá]ntic[ao]?\s*premium/i,        'Box Romántico Premium'],
+        [/rom[aá]ntic[ao]?/i,                  'Box Romántico'],
+        [/baby\s*shower/i,                     'Box Baby Shower'],
+        [/baby/i,                              'Box Baby'],
+        [/cumplea[nñ]os/i,                     'Box Cumpleaños'],
+        [/morning/i,                           'Box Morning'],
+        [/noche/i,                             'Box Noche'],
+        [/relax/i,                             'Box Relax'],
+        [/premium/i,                           'Box Premium'],
+        [/corporate|empresarial/i,             'Box Corporativo'],
       ];
       for (const [re, label] of specials) {
         if (re.test(s)) return label;
       }
-
-      // 3. Numeric codes
       const u = s.toUpperCase();
       let m;
       m = u.match(/\bO(\d{1,2})\b/);     if (m) return 'Box O' + m[1];
       m = u.match(/\bM(\d{1,2})\b/);     if (m) return 'Box M' + m[1];
       m = u.match(/\b0(\d)\b/);           if (m) return 'Box O' + m[1];
       m = u.match(/\b([1-9]|1\d|20)\b/); if (m) return 'Box O' + m[1];
-
       return null;
     }
 
+    // Convert word numbers to digits
+    function wordToNum(w) {
+      const map = {una:1,un:1,uno:1,dos:2,tres:3,cuatro:4,cinco:5,
+                   seis:6,siete:7,ocho:8,nueve:9,diez:10};
+      return map[w.toLowerCase()] || null;
+    }
+
+    // Extract all (quantity, boxCode) pairs from a product string
+    function extractBoxCounts(raw) {
+      if (!raw) return {};
+      const result = {};
+      // Pre-normalize: "O2 unidades de O3" → "2 unidades de O3"
+      // so the code acting as a quantity doesn't get counted as a box itself
+      let text = raw.trim().replace(
+        /[oO](\d{1,2})\s+unidades?\s+de/gi,
+        (_, n) => n + ' unidades de'
+      );
+
+      // Patterns to try (in order of specificity):
+      // 1. "3 Box O2", "3 O2", "3x O2"
+      // 2. "O2 x3", "O2 × 3"
+      // 3. "2 unidades de O3", "una unidad de O1"
+      // 4. bare code with no explicit quantity → qty=1
+
+      // Tokenize: find all box-like codes and nearby quantities
+      const codeRe = /(?:box\s+)?([oO](\d{1,2})|[mM](\d{1,2})|0(\d))\b/gi;
+      let match;
+      const codes = []; // [{index, code, rawMatch}]
+      while ((match = codeRe.exec(text)) !== null) {
+        const raw2 = match[1].toUpperCase();
+        let code;
+        if (/^O\d/.test(raw2))      code = 'Box O' + raw2.slice(1);
+        else if (/^M\d/.test(raw2)) code = 'Box M' + raw2.slice(1);
+        else if (/^0\d/.test(raw2)) code = 'Box O' + raw2.slice(1);
+        else code = 'Box O' + raw2;
+        codes.push({ index: match.index, code, fullLen: match[0].length });
+      }
+
+      if (codes.length === 0) {
+        // Try special models — just count as 1
+        const s2 = normalizeBoxCode(text);
+        if (s2) result[s2] = (result[s2]||0) + 1;
+        return result;
+      }
+
+      // For each found code, look for a quantity nearby (before or after)
+      const numWords = 'una?|un|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez';
+      codes.forEach(({index, code, fullLen}) => {
+        let qty = 1;
+
+        // Look BEFORE the code (up to 15 chars): "3 Box O2", "tres O2"
+        const before = text.slice(Math.max(0, index-15), index).trim();
+        const mBefore = before.match(/(\d+|(?:una?|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:x|×|unidades?\s+de|cajas?\s+de|box)?\s*$/i);
+        if (mBefore) {
+          const n = parseInt(mBefore[1]) || wordToNum(mBefore[1]);
+          if (n && n > 0 && n <= 50) qty = n;
+        }
+
+        // Look AFTER the code (up to 20 chars): "O2 x3", "O2 × 2", "O2 unidades"
+        if (qty === 1) {
+          const after = text.slice(index + fullLen, index + fullLen + 20).trim();
+          const mAfter = after.match(/^\s*(?:x|×)\s*(\d+)/i);
+          if (mAfter) qty = parseInt(mAfter[1]) || 1;
+        }
+
+        result[code] = (result[code]||0) + qty;
+      });
+
+      return result;
+    }
+
+    // Aggregate box counts across ALL orders of the day
     const boxCounts = {};
     dayOrders.forEach(o => {
-      const code = normalizeBoxCode(o.product);
-      if (code) boxCounts[code] = (boxCounts[code] || 0) + 1;
+      const counts = extractBoxCounts(o.product);
+      Object.entries(counts).forEach(([code, qty]) => {
+        boxCounts[code] = (boxCounts[code]||0) + qty;
+      });
     });
 
     const boxEntries = Object.entries(boxCounts).sort((a,b) => {
-      // Sort by box number: O1 < O2 < O9 < M1...
-      const n = s => { const m = s.match(/(\d+)$/); return m ? parseInt(m[1]) : 99; };
-      return n(a[0]) - n(b[0]);
+      // Sort: O1<O2<O9<M1..., then specials alphabetically
+      const numOf = s => { const m = s.match(/(\d+)$/); return m ? parseInt(m[1]) : 99; };
+      const prefOf = s => s.includes(' O') ? 0 : s.includes(' M') ? 1 : 2;
+      if (prefOf(a[0]) !== prefOf(b[0])) return prefOf(a[0]) - prefOf(b[0]);
+      return numOf(a[0]) - numOf(b[0]);
     });
 
     const summaryEl = document.createElement('div');
     summaryEl.className = 'box-summary-wrap';
-
     const total = boxEntries.reduce((s,[,q])=>s+q, 0);
-    const headerText = boxEntries.length
-      ? boxEntries.map(([name,qty])=>qty+'× '+name.replace('Box ','')).join('  ·  ')
-      : 'sin boxes detectados';
 
     summaryEl.innerHTML = `
       <div class="box-summary-toggle" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
@@ -814,7 +875,7 @@ function render() {
               <span class="box-chip-qty">${qty}</span>
               <span class="box-chip-name">${name}</span>
             </div>`).join('')}
-          ${boxEntries.length===0?'<span style="font-size:12px;color:var(--ink3);padding:4px 0">Sin tipo de box detectado en los pedidos</span>':''}
+          ${boxEntries.length===0?'<span style="font-size:12px;color:var(--ink3);padding:4px 0">Sin tipo de box detectado</span>':''}
         </div>
       </div>`;
 
@@ -1010,86 +1071,11 @@ window.toggleDay = function(header) {
   if (chevron) chevron.classList.toggle('open', !isOpen);
 };
 
-// ── PRODUCCIÓN DEL DÍA ──
-function renderProduccion() {
-  const el = document.getElementById('main-content');
-  if (!el) return;
-  const today = dayKey(new Date());
-
-  // Pedidos de hoy que no están entregados ni cerrados
-  const todayOrders = orders.filter(o =>
-    o.deliveryDate === today && o.status !== 'entregado' && !o.cerrado
-  );
-
-  // Count by box type — normalize product name for grouping
-  function normalizeBox(raw) {
-    if (!raw) return 'Sin box';
-    return raw.trim().replace(/\s+/g,' ');
-  }
-
-  const counts = {};
-  todayOrders.forEach(o => {
-    const key = normalizeBox(o.product);
-    counts[key] = (counts[key] || 0) + 1;
-  });
-
-  const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]);
-  const total = todayOrders.length;
-
-  // Date label
-  const dateLabel = new Date(today+'T12:00:00').toLocaleDateString('es-PE',{
-    weekday:'long', day:'numeric', month:'long'
-  });
-
-  let rowsHtml = '';
-  if (sorted.length === 0) {
-    rowsHtml = `<div class="empty" style="padding:40px 0">
-      <div class="empty-icon">📦</div>
-      <div class="empty-title">Sin pedidos hoy</div>
-      <div class="empty-sub">Los pedidos de hoy aparecerán aquí.</div>
-    </div>`;
-  } else {
-    rowsHtml = sorted.map(([box, qty], i) => {
-      const bar = Math.round((qty / total) * 100);
-      return `
-        <div style="display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--border)">
-          <div style="width:36px;height:36px;border-radius:10px;background:var(--paper3);display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:16px;font-weight:600;color:var(--ink);flex-shrink:0">${String(qty).padStart(2,'0')}</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:4px">${box}</div>
-            <div style="height:5px;background:var(--paper3);border-radius:4px;overflow:hidden">
-              <div style="height:100%;width:${bar}%;background:var(--grass);border-radius:4px;transition:width .4s"></div>
-            </div>
-          </div>
-          <div style="font-size:11px;font-weight:700;color:var(--ink3);flex-shrink:0">${bar}%</div>
-        </div>`;
-    }).join('');
-  }
-
-  el.innerHTML = `
-    <div style="background:white;border:1px solid var(--border);border-radius:var(--rr);overflow:hidden;margin-bottom:16px">
-      <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-        <div>
-          <div style="font-family:'Playfair Display',serif;font-size:17px;color:var(--ink)">Resumen de producción</div>
-          <div style="font-size:12px;color:var(--ink3);margin-top:2px;text-transform:capitalize">${dateLabel}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-family:'Playfair Display',serif;font-size:26px;color:var(--grass)">${total}</div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3)">pedido${total!==1?'s':''}</div>
-        </div>
-      </div>
-      <div style="padding:4px 20px 8px">${rowsHtml}</div>
-    </div>
-    ${sorted.length > 0 ? `
-    <div style="background:var(--paper2);border-radius:var(--r);padding:12px 16px;font-size:12px;color:var(--ink3);line-height:1.6">
-      💡 Los conteos son de pedidos <strong style="color:var(--ink)">pendientes de hoy</strong> (no entregados). Se actualizan en tiempo real.
-    </div>` : ''}`;
-}
-
 function filterOrders() {
   const today = dayKey(new Date());
   const tomorrow = dayKey(new Date(Date.now()+86400000));
   const weekEnd = dayKey(new Date(Date.now()+7*86400000));
-  if (currentTab==='finanzas' || currentTab==='balance' || currentTab==='produccion') return [];
+  if (currentTab==='finanzas' || currentTab==='balance') return [];
   if (currentTab.startsWith('mes-')) {
     const ym = currentTab.slice(4); // "YYYY-MM"
     return orders.filter(o => o.deliveryDate && o.deliveryDate.startsWith(ym));
