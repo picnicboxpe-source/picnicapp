@@ -169,6 +169,13 @@ body { font-family:'Plus Jakarta Sans',sans-serif; background:var(--paper); colo
   overflow-x:auto; scrollbar-width:none;
 }
 .app-nav::-webkit-scrollbar { display:none; }
+.nav-tab.tab-dragging { opacity:0.4; }
+.nav-tab.tab-drag-over { border-bottom-color:var(--grass) !important; background:var(--grass-ll); }
+.ins-row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); cursor:grab; user-select:none; }
+.ins-row:active { cursor:grabbing; }
+.ins-row.ins-dragging { opacity:0.35; }
+.ins-row.ins-over { border-top:2px solid var(--grass); }
+.ins-handle { color:var(--ink3); font-size:15px; margin-right:10px; flex-shrink:0; touch-action:none; }
 .nav-tab {
   padding:12px 16px; font-size:13px; font-weight:500; color:var(--ink3);
   border-bottom:2px solid transparent; cursor:pointer; white-space:nowrap;
@@ -446,6 +453,7 @@ main { padding:20px; max-width:680px; margin:0 auto; }
     <button class="nav-tab" onclick="setTab('entregado',this)">Entregados</button>
     <button class="nav-tab" onclick="setTab('finanzas',this)">💰 Finanzas</button>
     <button class="nav-tab" onclick="setTab('balance',this)">📊 Balance</button>
+    <button class="nav-tab" onclick="setTab('insumos',this)">🧾 Insumos</button>
   </nav>
 
   <main id="main-content"></main>
@@ -588,6 +596,7 @@ function startListeners(uid) {
     refreshMonthTabs();
     if (!sortingInProgress) {
       render();
+      if (currentTab === 'insumos') renderInsumos();
     }
   });
 
@@ -650,6 +659,7 @@ function render() {
   if (!el) return;
   if (currentTab === 'finanzas')  { renderFinanzas();  return; }
   if (currentTab === 'balance')   { renderBalance();   return; }
+  if (currentTab === 'insumos')   { renderInsumos();   return; }
   let list = filterOrders();
 
   const today = dayKey(new Date());
@@ -1110,11 +1120,346 @@ window.toggleDay = function(header) {
   if (chevron) chevron.classList.toggle('open', !isOpen);
 };
 
+// ── INSUMOS DEL DÍA ──
+const RECETAS = {
+  'Box Morning 1': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Dip de granola', qty:1, unit:''},
+    {item:'Muffin de vainilla chips', qty:1, unit:''},
+    {item:'Roll de canela', qty:1, unit:''},
+    {item:'Trufa de chocolate', qty:2, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+  ],
+  'Box Morning 2': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Wrap de tortilla integral (palta, lechuga, tomate, pollo)', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Dip de granola', qty:1, unit:''},
+    {item:'Dip de mermelada cero azúcar', qty:1, unit:''},
+    {item:'Mini tostadas', qty:4, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+  ],
+  'Box Morning 3': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Mini croissant con pollo y mayonesa', qty:1, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+    {item:'Trufa de chocolate', qty:2, unit:''},
+  ],
+  'Box Morning 4': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Muffin de vainilla chips', qty:1, unit:''},
+    {item:'Roll de canela', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Trufa de chocolate', qty:1, unit:''},
+    {item:'Mini croissant con pollo y mayonesa', qty:2, unit:''},
+    {item:'Mini hamburguesas', qty:2, unit:''},
+  ],
+  'Box Morning 5': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+    {item:'Decoración de flores', qty:1, unit:''},
+    {item:'Mini hamburguesas', qty:2, unit:''},
+    {item:'Macarrón', qty:2, unit:''},
+    {item:'Roll de canela', qty:1, unit:''},
+    {item:'Trufa de chocolate', qty:1, unit:''},
+    {item:'Muffin de vainilla chips', qty:1, unit:''},
+  ],
+  'Box Morning 6': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Frasco con frutos secos', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Mini croissant con pollo y mayonesa', qty:1, unit:''},
+    {item:'Trufa de chocolate', qty:1, unit:''},
+    {item:'Dip de mermelada natural', qty:1, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+    {item:'Mini tostadas', qty:6, unit:''},
+  ],
+  'Box Morning 7': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Mini croissant con pollo y mayonesa', qty:2, unit:''},
+    {item:'Mini hamburguesas', qty:2, unit:''},
+    {item:'Muffin de vainilla chips', qty:1, unit:''},
+    {item:'Roll de canela', qty:1, unit:''},
+    {item:'Mini alfajores', qty:3, unit:''},
+    {item:'Trufa de chocolate', qty:3, unit:''},
+    {item:'Bites de brownies', qty:3, unit:''},
+  ],
+  'Box Morning 8': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Jar XL con mix de piqueos salado', qty:1, unit:''},
+    {item:'Muffin de vainilla chips', qty:1, unit:''},
+    {item:'Trufa de chocolate', qty:1, unit:''},
+    {item:'Mini hamburguesas', qty:2, unit:''},
+    {item:'Mini twister de pollo con queso cheddar', qty:2, unit:''},
+  ],
+  'Box Magic Book': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Cake personal delicia de limón', qty:1, unit:''},
+    {item:'Wrap de pollo', qty:1, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Mini tostadas', qty:1, unit:'porciones'},
+  ],
+  'Box Deluxe Heart': [
+    {item:'Mini Ricadonna (Asti o Ruby)', qty:1, unit:''},
+    {item:'Frasco con frutos secos', qty:1, unit:''},
+    {item:'Brownie', qty:1, unit:''},
+    {item:'Roll de canela', qty:1, unit:''},
+    {item:'Macarrón', qty:2, unit:''},
+    {item:'Mini alfajores', qty:2, unit:''},
+    {item:'Trufa de chocolate', qty:1, unit:''},
+    {item:'Brochetas (cabanossi, aceitunas verdes con castañas, queso edam)', qty:3, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+  ],
+  'Box O5': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Macarrón', qty:1, unit:''},
+    {item:'Postre de chocolate y pistacho', qty:1, unit:''},
+    {item:'Mini tostadas', qty:3, unit:''},
+  ],
+  'Box Cumpleaños': [
+    {item:'Jugo de naranja natural', qty:1, unit:''},
+    {item:'Mix de frutas de estación', qty:1, unit:''},
+    {item:'Jar con yogurt griego y frutas en almíbar', qty:1, unit:''},
+    {item:'Macarrón', qty:1, unit:''},
+    {item:'Postre de chocolate y pistacho', qty:1, unit:''},
+    {item:'Mini tostadas', qty:3, unit:''},
+  ],
+};
+
+// Also map alternate names
+RECETAS['Box O1'] = RECETAS['Box Morning 3'];
+RECETAS['Box O2'] = RECETAS['Box Morning 4'];
+RECETAS['Box O3'] = RECETAS['Box Morning 6'];
+RECETAS['Box O4'] = RECETAS['Box Morning 8'];
+
+function renderInsumos() {
+  const el = document.getElementById('main-content');
+  if (!el) return;
+  const today = dayKey(new Date());
+
+  // All future + today pending orders grouped by day
+  const relevant = orders.filter(o =>
+    o.deliveryDate && o.deliveryDate >= today && o.status !== 'entregado' && !o.cerrado
+  );
+
+  if (relevant.length === 0) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">🧾</div><div class="empty-title">Sin pedidos pendientes</div><div class="empty-sub">Los insumos por día aparecerán aquí.</div></div>`;
+    return;
+  }
+
+  // Group by deliveryDate
+  const byDay = {};
+  relevant.forEach(o => {
+    if (!byDay[o.deliveryDate]) byDay[o.deliveryDate] = [];
+    byDay[o.deliveryDate].push(o);
+  });
+
+  const sortedDays = Object.keys(byDay).sort();
+
+  // Helper: build insumos block for a set of orders
+  function buildInsumos(dayOrders) {
+    const boxCounts = {};
+    dayOrders.forEach(o => {
+      const counts = extractBoxCounts(o.product);
+      Object.entries(counts).forEach(([code, qty]) => {
+        boxCounts[code] = (boxCounts[code] || 0) + qty;
+      });
+    });
+    const insumoTotals = {};
+    const unknownBoxes = [];
+    Object.entries(boxCounts).forEach(([boxName, boxQty]) => {
+      const recipe = RECETAS[boxName];
+      if (!recipe) { unknownBoxes.push({boxName, boxQty}); return; }
+      recipe.forEach(({item, qty}) => {
+        const key = item.toLowerCase();
+        if (!insumoTotals[key]) insumoTotals[key] = {item, total: 0, breakdown: []};
+        insumoTotals[key].total += qty * boxQty;
+        insumoTotals[key].breakdown.push({boxName, boxQty, perBox: qty});
+      });
+    });
+    return { boxCounts, insumoTotals, unknownBoxes };
+  }
+
+  let html = '';
+
+  sortedDays.forEach(date => {
+    const dayOrders = byDay[date];
+    const isToday = date === today;
+    const openDefault = isToday;
+    const label = formatDayLabel(date);
+    const { boxCounts, insumoTotals, unknownBoxes } = buildInsumos(dayOrders);
+
+    const boxChips = Object.entries(boxCounts)
+      .sort((a,b) => a[0].localeCompare(b[0]))
+      .map(([name, qty]) =>
+        `<span style="display:inline-flex;align-items:center;gap:5px;background:white;border:1px solid var(--border2);border-radius:100px;padding:4px 10px 4px 7px;font-size:12px;margin:2px">
+          <span style="background:var(--ink);color:white;border-radius:100px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${qty}</span>
+          <span style="color:var(--ink2);font-weight:500">${name}</span>
+        </span>`
+      ).join('');
+
+    const sortedInsumos = Object.values(insumoTotals).sort((a,b) => a.item.localeCompare(b.item));
+
+    const unknownWarn = unknownBoxes.length
+      ? `<div style="background:var(--sun-l);border-left:3px solid var(--sun);border-radius:0 8px 8px 0;padding:8px 12px;font-size:12px;color:#7A5000;margin-bottom:10px">
+          ⚠️ Sin receta: ${unknownBoxes.map(u => `<strong>${u.boxName}</strong> ×${u.boxQty}`).join(', ')}
+        </div>` : '';
+
+    const insumosRows = sortedInsumos.map(({item, total, breakdown}) => {
+      const bStr = breakdown.map(b =>
+        `${b.boxQty > 1 ? b.boxQty+'×' : ''}${b.boxName.replace('Box ','')} (${b.perBox * b.boxQty})`
+      ).join(', ');
+      return `<div class="ins-row" draggable="true">
+        <span class="ins-handle">⠿</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500;color:var(--ink);text-transform:capitalize">${item}</div>
+          <div style="font-size:11px;color:var(--ink3);margin-top:1px">${bStr}</div>
+        </div>
+        <div style="font-family:'Playfair Display',serif;font-size:20px;font-weight:600;color:var(--grass);margin-left:14px;flex-shrink:0">${total}</div>
+      </div>`;
+    }).join('');
+
+    html += `
+    <div style="margin-bottom:12px;border-radius:var(--rr);overflow:hidden;border:1px solid ${isToday ? 'var(--grass-l)' : 'var(--border)'}">
+      <div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.querySelector('.ins-chev').style.transform=this.nextElementSibling.style.display==='none'?'':'rotate(180deg)'"
+        style="display:flex;align-items:center;justify-content:space-between;padding:13px 18px;background:${isToday ? 'var(--grass-ll)' : 'var(--paper2)'};cursor:pointer;user-select:none">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--ink)">${label}</div>
+          <div style="font-size:11px;color:var(--ink3);margin-top:2px">${dayOrders.length} pedido${dayOrders.length!==1?'s':''} · ${Object.values(boxCounts).reduce((s,v)=>s+v,0)} boxes</div>
+        </div>
+        <svg class="ins-chev" style="transition:transform .25s;${openDefault?'transform:rotate(180deg)':''}" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div style="display:${openDefault ? 'block' : 'none'};background:white;padding:12px 18px 4px">
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">${boxChips}</div>
+        ${unknownWarn}
+        <div id="ins-list-${date}">${insumosRows || '<div style="font-size:13px;color:var(--ink3);padding:8px 0">Sin recetas definidas para estos boxes.</div>'}</div>
+      </div>
+    </div>`;
+  });
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="font-family:'Playfair Display',serif;font-size:17px;color:var(--ink)">🧾 Insumos por día</div>
+      <div style="font-size:12px;color:var(--ink3)">${sortedDays.length} día${sortedDays.length!==1?'s':''} pendientes</div>
+    </div>
+    ${html}`;
+  // Init drag after render
+  el.querySelectorAll('[id^="ins-list-"]').forEach(list => initInsumosDrag(list));
+}
+
+// ── INSUMOS LIST DRAG TO REORDER ──
+function initInsumosDrag(container) {
+  let dragSrc = null;
+
+  container.querySelectorAll('.ins-row').forEach(row => {
+    row.addEventListener('dragstart', () => {
+      dragSrc = row;
+      requestAnimationFrame(() => row.classList.add('ins-dragging'));
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('ins-dragging');
+      container.querySelectorAll('.ins-row').forEach(r => r.classList.remove('ins-over'));
+    });
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (row !== dragSrc) {
+        container.querySelectorAll('.ins-row').forEach(r => r.classList.remove('ins-over'));
+        row.classList.add('ins-over');
+      }
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('ins-over'));
+    row.addEventListener('drop', e => {
+      e.preventDefault();
+      row.classList.remove('ins-over');
+      if (dragSrc && row !== dragSrc) {
+        const rows = [...container.querySelectorAll('.ins-row')];
+        if (rows.indexOf(dragSrc) < rows.indexOf(row)) row.after(dragSrc);
+        else row.before(dragSrc);
+      }
+    });
+
+    // Touch drag for mobile
+    const handle = row.querySelector('.ins-handle') || row;
+    let ghost = null, offY = 0, currentTouchY = 0, scrollRaf = null;
+
+    function scrollLoop() {
+      const zone = 90, speed = 8;
+      if (currentTouchY < zone) {
+        window.scrollBy(0, -Math.ceil((zone - currentTouchY) / zone * speed));
+        scrollRaf = requestAnimationFrame(scrollLoop);
+      } else if (currentTouchY > window.innerHeight - zone) {
+        window.scrollBy(0, Math.ceil((currentTouchY - (window.innerHeight - zone)) / zone * speed));
+        scrollRaf = requestAnimationFrame(scrollLoop);
+      } else {
+        scrollRaf = null;
+      }
+    }
+
+    handle.addEventListener('touchstart', e => {
+      e.stopPropagation();
+      dragSrc = row;
+      const t = e.touches[0];
+      currentTouchY = t.clientY;
+      const rect = row.getBoundingClientRect();
+      offY = t.clientY - rect.top;
+      ghost = row.cloneNode(true);
+      ghost.style.cssText = `position:absolute;left:${rect.left}px;width:${rect.width}px;top:${rect.top + window.scrollY}px;opacity:0.9;pointer-events:none;z-index:9999;background:white;box-shadow:0 4px 20px rgba(0,0,0,.15);border-radius:8px;padding:0 18px`;
+      document.body.appendChild(ghost);
+      row.classList.add('ins-dragging');
+    }, {passive:true});
+
+    handle.addEventListener('touchmove', e => {
+      if (!ghost) return;
+      e.preventDefault();
+      const t = e.touches[0];
+      currentTouchY = t.clientY;
+      ghost.style.top = (t.clientY + window.scrollY - offY) + 'px';
+      // Hit test for drop target
+      ghost.style.display = 'none';
+      const el2 = document.elementFromPoint(t.clientX, t.clientY);
+      ghost.style.display = '';
+      const target = el2 && el2.closest('.ins-row');
+      container.querySelectorAll('.ins-row').forEach(r => r.classList.remove('ins-over'));
+      if (target && target !== row) target.classList.add('ins-over');
+      // Kick off scroll loop if not already running
+      if (!scrollRaf) scrollRaf = requestAnimationFrame(scrollLoop);
+    }, {passive:false});
+
+    handle.addEventListener('touchend', e => {
+      if (!ghost) return;
+      if (scrollRaf) { cancelAnimationFrame(scrollRaf); scrollRaf = null; }
+      ghost.remove(); ghost = null;
+      row.classList.remove('ins-dragging');
+      const t = e.changedTouches[0];
+      const el2 = document.elementFromPoint(t.clientX, t.clientY);
+      const target = el2 && el2.closest('.ins-row');
+      container.querySelectorAll('.ins-row').forEach(r => r.classList.remove('ins-over'));
+      if (target && target !== row) {
+        const rows = [...container.querySelectorAll('.ins-row')];
+        if (rows.indexOf(row) < rows.indexOf(target)) target.after(row);
+        else target.before(row);
+      }
+    }, {passive:true});
+
+    handle.addEventListener('touchcancel', () => {
+      if (scrollRaf) { cancelAnimationFrame(scrollRaf); scrollRaf = null; }
+      if (ghost) { ghost.remove(); ghost = null; }
+      row.classList.remove('ins-dragging');
+    }, {passive:true});
+  });
+}
+
 function filterOrders() {
   const today = dayKey(new Date());
   const tomorrow = dayKey(new Date(Date.now()+86400000));
   const weekEnd = dayKey(new Date(Date.now()+7*86400000));
-  if (currentTab==='finanzas' || currentTab==='balance') return [];
+  if (currentTab==='finanzas' || currentTab==='balance' || currentTab==='insumos') return [];
   if (currentTab.startsWith('mes-')) {
     const ym = currentTab.slice(4); // "YYYY-MM"
     return orders.filter(o => o.deliveryDate && o.deliveryDate.startsWith(ym));
@@ -1619,6 +1964,95 @@ window.setTab = function(tab, el) {
   if (el) el.classList.add('active');
   render();
 };
+
+// ── NAV TAB DRAG TO REORDER ──
+function initNavDrag() {
+  const nav = document.getElementById('app-nav');
+  if (!nav) return;
+  let dragSrc = null;
+
+  function addDragListeners(btn) {
+    btn.draggable = true;
+    btn.addEventListener('dragstart', () => {
+      dragSrc = btn;
+      requestAnimationFrame(() => btn.classList.add('tab-dragging'));
+    });
+    btn.addEventListener('dragend', () => {
+      btn.classList.remove('tab-dragging');
+      nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
+    });
+    btn.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (btn !== dragSrc) {
+        nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
+        btn.classList.add('tab-drag-over');
+      }
+    });
+    btn.addEventListener('dragleave', () => btn.classList.remove('tab-drag-over'));
+    btn.addEventListener('drop', e => {
+      e.preventDefault();
+      btn.classList.remove('tab-drag-over');
+      if (dragSrc && btn !== dragSrc) {
+        const tabs = [...nav.querySelectorAll('.nav-tab')];
+        const fromIdx = tabs.indexOf(dragSrc);
+        const toIdx   = tabs.indexOf(btn);
+        if (fromIdx < toIdx) btn.after(dragSrc);
+        else btn.before(dragSrc);
+      }
+    });
+    // Touch reorder for mobile
+    let touchSrc = null, touchClone = null, touchOffX = 0;
+    btn.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1) return;
+      touchSrc = btn;
+      const t = e.touches[0];
+      touchOffX = t.clientX - btn.getBoundingClientRect().left;
+      touchClone = btn.cloneNode(true);
+      touchClone.style.cssText = `position:fixed;top:${btn.getBoundingClientRect().top}px;left:${btn.getBoundingClientRect().left}px;width:${btn.offsetWidth}px;opacity:0.85;pointer-events:none;z-index:9999;background:white;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,.15)`;
+      document.body.appendChild(touchClone);
+      btn.classList.add('tab-dragging');
+    }, {passive:true});
+    btn.addEventListener('touchmove', e => {
+      if (!touchClone) return;
+      e.preventDefault();
+      const t = e.touches[0];
+      touchClone.style.left = (t.clientX - touchOffX) + 'px';
+      // Find tab under finger
+      touchClone.style.display = 'none';
+      const el2 = document.elementFromPoint(t.clientX, t.clientY);
+      touchClone.style.display = '';
+      const target = el2 && el2.classList.contains('nav-tab') ? el2 : null;
+      nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
+      if (target && target !== btn) target.classList.add('tab-drag-over');
+    }, {passive:false});
+    btn.addEventListener('touchend', e => {
+      if (!touchClone) return;
+      touchClone.remove(); touchClone = null;
+      btn.classList.remove('tab-dragging');
+      const t = e.changedTouches[0];
+      const el2 = document.elementFromPoint(t.clientX, t.clientY);
+      const target = el2 && el2.classList.contains('nav-tab') ? el2 : null;
+      nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
+      if (target && target !== btn) {
+        const tabs = [...nav.querySelectorAll('.nav-tab')];
+        if (tabs.indexOf(btn) < tabs.indexOf(target)) target.after(btn);
+        else target.before(btn);
+      }
+    }, {passive:true});
+  }
+
+  nav.querySelectorAll('.nav-tab').forEach(addDragListeners);
+  // Re-apply when month tabs are added dynamically
+  const obs = new MutationObserver(muts => {
+    muts.forEach(m => m.addedNodes.forEach(n => {
+      if (n.classList && n.classList.contains('nav-tab')) addDragListeners(n);
+    }));
+  });
+  obs.observe(nav, {childList: true});
+}
+
+// Init after DOM ready
+document.addEventListener('DOMContentLoaded', () => setTimeout(initNavDrag, 500));
 
 // ── IMPORT ──
 window.openImport = function() {
