@@ -801,7 +801,7 @@ function render() {
           ${o.precio?`<span class="meta-chip" style="color:var(--grass);font-weight:600">S/${parseFloat(o.precio).toFixed(0)}</span>`:''}
         </div>
         ${o.address?`<div style="font-size:12px;color:var(--ink3);margin-top:6px;padding-left:8px;display:flex;align-items:flex-start;gap:4px"><span>📍</span><span>${o.address}</span></div>`:''}
-        ${o.extras?`<div style="font-size:12px;color:var(--ink2);margin-top:4px;padding-left:8px;display:flex;align-items:flex-start;gap:4px"><span>✨</span><span>${o.extras}</span></div>`:''}`;
+        ${o.extras?`<div style="font-size:12px;color:var(--ink2);margin-top:4px;padding-left:8px;padding-right:8px;display:flex;align-items:flex-start;gap:4px;background:#FFFBEA;border-radius:6px;padding-top:4px;padding-bottom:4px"><span>✨</span><span>${o.extras}</span></div>`:''}`;
 
       // Open detail on tap (not during sort)
       card.addEventListener('click', () => {
@@ -876,7 +876,21 @@ function extractBoxCounts(raw) {
   const s = raw.trim();
   if (/^\s*promo/i.test(s)) return { [s]: 1 };
 
-  // Named models take priority
+  // If multiple boxes separated by + or "y", process each part
+  // e.g. "Box 01 + mamá rose" → Box O1 + Box Mamá Rose
+  const parts = s.split(/\s*[+&]\s*|\s+y\s+(?=[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ])/i);
+  if (parts.length > 1) {
+    const combined = {};
+    parts.forEach(part => {
+      const sub = extractBoxCounts(part.trim());
+      Object.entries(sub).forEach(([k, v]) => {
+        combined[k] = (combined[k] || 0) + v;
+      });
+    });
+    return combined;
+  }
+
+  // Named models take priority (single part)
   const modelName = normalizeBoxCode(s);
   if (modelName && !/^Box [OM]\d/.test(modelName)) {
     const qty = extractLeadingQty(s);
@@ -885,7 +899,7 @@ function extractBoxCounts(raw) {
 
   // Pre-normalize quantity expressions
   let text = s;
-  // "Box 02 und de box 1" → "2 und de box 1"  (Box+digit+und = quantity)
+  // "Box 02 und de box 1" → "2 und de box 1"
   text = text.replace(/\bbox\s+0?(\d{1,2})\s+(und|unidades?)\s+de\b/gi, '$1 $2 de');
   // "O2 unidades de O3" → "2 unidades de O3"
   text = text.replace(/\b[oO](\d{1,2})\s+unidades?\s+de/gi, '$1 unidades de');
@@ -898,9 +912,8 @@ function extractBoxCounts(raw) {
   const codes = [];
   while ((m = codeRe.exec(text)) !== null) {
     let code;
-    if (m[5]) {
-      code = 'Box O' + m[5];
-    } else {
+    if (m[5]) { code = 'Box O' + m[5]; }
+    else {
       const r2 = m[1].toUpperCase();
       if (/^O/.test(r2))      code = 'Box O' + r2.slice(1);
       else if (/^M/.test(r2)) code = 'Box M' + r2.slice(1);
