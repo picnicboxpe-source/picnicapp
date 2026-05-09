@@ -1353,8 +1353,37 @@ function renderInsumos() {
   el.querySelectorAll('[id^="ins-list-"]').forEach(list => initInsumosDrag(list));
 }
 
+// ── INSUMOS ORDER PERSISTENCE ──
+function saveInsumosOrder(container) {
+  const id = container.id; // e.g. "ins-list-2025-05-10"
+  if (!id) return;
+  const order = [...container.querySelectorAll('.ins-row')].map(r => {
+    const nameEl = r.querySelector('div > div:first-child');
+    return nameEl ? nameEl.textContent.trim().toLowerCase() : '';
+  }).filter(Boolean);
+  localStorage.setItem('picnicbox_ins_' + id, JSON.stringify(order));
+}
+
+function restoreInsumosOrder(container) {
+  const id = container.id;
+  if (!id) return;
+  const saved = localStorage.getItem('picnicbox_ins_' + id);
+  if (!saved) return;
+  try {
+    const order = JSON.parse(saved);
+    order.forEach(name => {
+      const row = [...container.querySelectorAll('.ins-row')].find(r => {
+        const el = r.querySelector('div > div:first-child');
+        return el && el.textContent.trim().toLowerCase() === name;
+      });
+      if (row) container.appendChild(row);
+    });
+  } catch(e) {}
+}
+
 // ── INSUMOS LIST DRAG TO REORDER ──
 function initInsumosDrag(container) {
+  restoreInsumosOrder(container);
   let dragSrc = null;
 
   container.querySelectorAll('.ins-row').forEach(row => {
@@ -1381,6 +1410,7 @@ function initInsumosDrag(container) {
         const rows = [...container.querySelectorAll('.ins-row')];
         if (rows.indexOf(dragSrc) < rows.indexOf(row)) row.after(dragSrc);
         else row.before(dragSrc);
+        saveInsumosOrder(container);
       }
     });
 
@@ -1444,6 +1474,7 @@ function initInsumosDrag(container) {
         const rows = [...container.querySelectorAll('.ins-row')];
         if (rows.indexOf(row) < rows.indexOf(target)) target.after(row);
         else target.before(row);
+        saveInsumosOrder(container);
       }
     }, {passive:true});
 
@@ -1966,10 +1997,68 @@ window.setTab = function(tab, el) {
 };
 
 // ── NAV TAB DRAG TO REORDER ──
+// ── TAB ORDER PERSISTENCE ──
+function saveTabOrder() {
+  const nav = document.getElementById('app-nav');
+  if (!nav) return;
+  const order = [...nav.querySelectorAll('.nav-tab')].map(b => {
+    const fn = b.getAttribute('onclick') || '';
+    const m = fn.match(/setTab\('([^']+)'/);
+    return m ? m[1] : (b.dataset.month || b.textContent.trim());
+  });
+  localStorage.setItem('picnicbox_tab_order', JSON.stringify(order));
+}
+
+function restoreTabOrder() {
+  const nav = document.getElementById('app-nav');
+  if (!nav) return;
+  const saved = localStorage.getItem('picnicbox_tab_order');
+  if (!saved) return;
+  try {
+    const order = JSON.parse(saved);
+    order.forEach(key => {
+      const btn = [...nav.querySelectorAll('.nav-tab')].find(b => {
+        const fn = b.getAttribute('onclick') || '';
+        const m = fn.match(/setTab\('([^']+)'/);
+        return (m && m[1] === key) || b.dataset.month === key || b.textContent.trim() === key;
+      });
+      if (btn) nav.appendChild(btn);
+    });
+  } catch(e) {}
+}
+
 function initNavDrag() {
   const nav = document.getElementById('app-nav');
   if (!nav) return;
   let dragSrc = null;
+  let liveTouchX = 0;
+  let scrollRaf = null;
+
+  function scrollStep() {
+    const rect = nav.getBoundingClientRect();
+    const zone = 55, speed = 8;
+    const rel = liveTouchX - rect.left;
+    if (rel < zone && nav.scrollLeft > 0) {
+      nav.scrollLeft -= Math.ceil((zone - rel) / zone * speed);
+      scrollRaf = requestAnimationFrame(scrollStep);
+    } else if (rel > rect.width - zone && nav.scrollLeft < nav.scrollWidth - nav.clientWidth) {
+      nav.scrollLeft += Math.ceil((rel - (rect.width - zone)) / zone * speed);
+      scrollRaf = requestAnimationFrame(scrollStep);
+    } else {
+      scrollRaf = null;
+    }
+  }
+
+  function stopScroll() {
+    if (scrollRaf) { cancelAnimationFrame(scrollRaf); scrollRaf = null; }
+  }
+
+  function doReorder(src, target) {
+    const tabs = [...nav.querySelectorAll('.nav-tab')];
+    if (tabs.indexOf(src) < tabs.indexOf(target)) target.after(src);
+    else target.before(src);
+    saveTabOrder();
+  }
 
   function addDragListeners(btn) {
     btn.draggable = true;
@@ -1980,118 +2069,83 @@ function initNavDrag() {
     btn.addEventListener('dragend', () => {
       btn.classList.remove('tab-dragging');
       nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
+      stopScroll();
     });
     btn.addEventListener('dragover', e => {
       e.preventDefault();
+      liveTouchX = e.clientX;
       if (btn !== dragSrc) {
         nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
         btn.classList.add('tab-drag-over');
       }
+      if (!scrollRaf) scrollRaf = requestAnimationFrame(scrollStep);
     });
     btn.addEventListener('dragleave', () => btn.classList.remove('tab-drag-over'));
     btn.addEventListener('drop', e => {
       e.preventDefault();
+      stopScroll();
       btn.classList.remove('tab-drag-over');
-      if (dragSrc && btn !== dragSrc) {
-        const tabs = [...nav.querySelectorAll('.nav-tab')];
-        const fromIdx = tabs.indexOf(dragSrc);
-        const toIdx   = tabs.indexOf(btn);
-        if (fromIdx < toIdx) btn.after(dragSrc);
-        else btn.before(dragSrc);
-      }
+      if (dragSrc && btn !== dragSrc) doReorder(dragSrc, btn);
     });
-    // Touch reorder for mobile — requires 350ms long-press to activate
-    // Short taps and horizontal swipes pass through normally
-    let touchSrc = null, touchClone = null, touchOffX = 0;
-    let longPressTimer = null, touchStartX = 0, touchStartY = 0, dragActive = false;
+
+    let clone = null, offX = 0;
+    let pressTimer = null, startX = 0, startY = 0, active = false;
 
     btn.addEventListener('touchstart', e => {
       if (e.touches.length !== 1) return;
       const t = e.touches[0];
-      touchStartX = t.clientX;
-      touchStartY = t.clientY;
-      dragActive = false;
-      longPressTimer = setTimeout(() => {
-        // Only activate if finger hasn't moved much (not a swipe)
-        dragActive = true;
-        touchSrc = btn;
-        touchOffX = touchStartX - btn.getBoundingClientRect().left;
-        touchClone = btn.cloneNode(true);
-        touchClone.style.cssText = `position:fixed;top:${btn.getBoundingClientRect().top}px;left:${btn.getBoundingClientRect().left}px;width:${btn.offsetWidth}px;opacity:0.85;pointer-events:none;z-index:9999;background:white;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,.15)`;
-        document.body.appendChild(touchClone);
+      startX = t.clientX; startY = t.clientY; active = false;
+      pressTimer = setTimeout(() => {
+        active = true;
+        offX = startX - btn.getBoundingClientRect().left;
+        const r = btn.getBoundingClientRect();
+        clone = btn.cloneNode(true);
+        clone.style.cssText = 'position:fixed;top:'+r.top+'px;left:'+r.left+'px;width:'+r.width+'px;height:'+r.height+'px;opacity:0.9;pointer-events:none;z-index:9999;background:var(--paper);border-radius:6px;box-shadow:0 3px 16px rgba(0,0,0,.2);display:flex;align-items:center;padding:0 16px;font-family:Plus Jakarta Sans,sans-serif;font-size:13px;font-weight:500;color:var(--ink)';
+        document.body.appendChild(clone);
         btn.classList.add('tab-dragging');
       }, 350);
     }, {passive:true});
 
-    let navScrollRaf = null, navTouchX = 0;
-
-    function navScrollLoop() {
-      const navRect = nav.getBoundingClientRect();
-      const zone = 60, speed = 7;
-      const relX = navTouchX - navRect.left;
-      if (relX < zone) {
-        nav.scrollLeft -= Math.ceil((zone - relX) / zone * speed);
-        navScrollRaf = requestAnimationFrame(navScrollLoop);
-      } else if (relX > navRect.width - zone) {
-        nav.scrollLeft += Math.ceil((relX - (navRect.width - zone)) / zone * speed);
-        navScrollRaf = requestAnimationFrame(navScrollLoop);
-      } else {
-        navScrollRaf = null;
-      }
-    }
-
     btn.addEventListener('touchmove', e => {
       const t = e.touches[0];
-      const dx = Math.abs(t.clientX - touchStartX);
-      const dy = Math.abs(t.clientY - touchStartY);
-      // Cancel long-press if finger moves more than 8px (it's a scroll/swipe)
-      if ((dx > 8 || dy > 8) && !dragActive) {
-        clearTimeout(longPressTimer); longPressTimer = null;
-        return;
+      const dx = Math.abs(t.clientX - startX);
+      const dy = Math.abs(t.clientY - startY);
+      if (!active && (dx > 8 || dy > 8)) {
+        clearTimeout(pressTimer); pressTimer = null; return;
       }
-      if (!touchClone || !dragActive) return;
+      if (!active || !clone) return;
       e.preventDefault();
-      navTouchX = t.clientX;
-      touchClone.style.left = (t.clientX - touchOffX) + 'px';
-      touchClone.style.display = 'none';
+      clone.style.left = (t.clientX - offX) + 'px';
+      liveTouchX = t.clientX;
+      clone.style.visibility = 'hidden';
       const el2 = document.elementFromPoint(t.clientX, t.clientY);
-      touchClone.style.display = '';
-      const target = el2 && el2.classList.contains('nav-tab') ? el2 : null;
+      clone.style.visibility = '';
+      const tgt = el2 && el2.closest('.nav-tab');
       nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
-      if (target && target !== btn) target.classList.add('tab-drag-over');
-      // Kick off horizontal auto-scroll loop
-      if (!navScrollRaf) navScrollRaf = requestAnimationFrame(navScrollLoop);
+      if (tgt && tgt !== btn) tgt.classList.add('tab-drag-over');
+      if (!scrollRaf) scrollRaf = requestAnimationFrame(scrollStep);
     }, {passive:false});
 
-    btn.addEventListener('touchend', e => {
-      clearTimeout(longPressTimer); longPressTimer = null;
-      if (navScrollRaf) { cancelAnimationFrame(navScrollRaf); navScrollRaf = null; }
-      if (!touchClone || !dragActive) return;
-      touchClone.remove(); touchClone = null;
-      dragActive = false;
+    function endTouch(e) {
+      clearTimeout(pressTimer); pressTimer = null;
+      stopScroll();
+      if (!clone || !active) return;
+      clone.remove(); clone = null; active = false;
       btn.classList.remove('tab-dragging');
-      const t = e.changedTouches[0];
+      const changed = e.changedTouches;
+      const t = changed && changed[0];
+      if (!t) return;
       const el2 = document.elementFromPoint(t.clientX, t.clientY);
-      const target = el2 && el2.classList.contains('nav-tab') ? el2 : null;
+      const tgt = el2 && el2.closest('.nav-tab');
       nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
-      if (target && target !== btn) {
-        const tabs = [...nav.querySelectorAll('.nav-tab')];
-        if (tabs.indexOf(btn) < tabs.indexOf(target)) target.after(btn);
-        else target.before(btn);
-      }
-    }, {passive:true});
-
-    btn.addEventListener('touchcancel', () => {
-      clearTimeout(longPressTimer); longPressTimer = null;
-      if (navScrollRaf) { cancelAnimationFrame(navScrollRaf); navScrollRaf = null; }
-      if (touchClone) { touchClone.remove(); touchClone = null; }
-      dragActive = false;
-      btn.classList.remove('tab-dragging');
-    }, {passive:true});
+      if (tgt && tgt !== btn) doReorder(btn, tgt);
+    }
+    btn.addEventListener('touchend',    endTouch, {passive:true});
+    btn.addEventListener('touchcancel', endTouch, {passive:true});
   }
 
+  restoreTabOrder();
   nav.querySelectorAll('.nav-tab').forEach(addDragListeners);
-  // Re-apply when month tabs are added dynamically
   const obs = new MutationObserver(muts => {
     muts.forEach(m => m.addedNodes.forEach(n => {
       if (n.classList && n.classList.contains('nav-tab')) addDragListeners(n);
@@ -2101,7 +2155,7 @@ function initNavDrag() {
 }
 
 // Init after DOM ready
-document.addEventListener('DOMContentLoaded', () => setTimeout(initNavDrag, 500));
+document.addEventListener('DOMContentLoaded', () => setTimeout(initNavDrag, 600));
 
 // ── IMPORT ──
 window.openImport = function() {
