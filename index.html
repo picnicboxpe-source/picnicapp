@@ -740,19 +740,45 @@ function render() {
     // ── Box summary — normalized by code (O1/01, O2/02, etc.) ──
     function normalizeBoxCode(raw) {
       if (!raw) return null;
-      // Exception: if starts with "promo" keep full text
-      if (/^\s*promo\b/i.test(raw)) return raw.trim();
-      const s = raw.toUpperCase().replace(/\s+/g,' ');
-      const patterns = [
-        [/\bO(\d{1,2})\b/, m => 'Box O'+m[1]],
-        [/\bM(\d{1,2})\b/, m => 'Box M'+m[1]],
-        [/\b0(\d)\b/,      m => 'Box O'+m[1]],
-        [/\b([1-9]|1\d|20)\b/, m => 'Box O'+m[1]],
+      const s = raw.trim();
+
+      // 1. Promo: keep full text
+      if (/^\s*promo\b/i.test(s)) return s;
+
+      // 2. Named special models — specific combos before generic names
+      const specials = [
+        [/mam[aá]\s*relax/i,                    'Box Mamá Relax'],
+        [/mam[aá]\s*y\s*beb[eé]/i,              'Box Mamá y Bebé'],
+        [/mam[aá]\s*chef/i,                     'Box Mamá Chef'],
+        [/mam[aá]\s*fit/i,                      'Box Mamá Fit'],
+        [/mam[aá]\s*zen/i,                      'Box Mamá Zen'],
+        [/mam[aá]\s*glow/i,                     'Box Mamá Glow'],
+        [/mam[aá]/i,                            'Box Mamá'],
+        [/desayuno\s*premium/i,                 'Box Desayuno Premium'],
+        [/desayuno/i,                           'Box Desayuno'],
+        [/rom[aá]ntic[ao]?\s*premium/i,         'Box Romántico Premium'],
+        [/rom[aá]ntic[ao]?/i,                   'Box Romántico'],
+        [/baby\s*shower/i,                      'Box Baby Shower'],
+        [/baby/i,                               'Box Baby'],
+        [/cumplea[nñ]os/i,                      'Box Cumpleaños'],
+        [/morning/i,                            'Box Morning'],
+        [/noche/i,                              'Box Noche'],
+        [/relax/i,                              'Box Relax'],
+        [/premium/i,                            'Box Premium'],
+        [/corporate|empresarial/i,              'Box Corporativo'],
       ];
-      for (const [re, fn] of patterns) {
-        const m = s.match(re);
-        if (m) return fn(m);
+      for (const [re, label] of specials) {
+        if (re.test(s)) return label;
       }
+
+      // 3. Numeric codes
+      const u = s.toUpperCase();
+      let m;
+      m = u.match(/\bO(\d{1,2})\b/);     if (m) return 'Box O' + m[1];
+      m = u.match(/\bM(\d{1,2})\b/);     if (m) return 'Box M' + m[1];
+      m = u.match(/\b0(\d)\b/);           if (m) return 'Box O' + m[1];
+      m = u.match(/\b([1-9]|1\d|20)\b/); if (m) return 'Box O' + m[1];
+
       return null;
     }
 
