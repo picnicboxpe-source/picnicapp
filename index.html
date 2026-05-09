@@ -2023,6 +2023,23 @@ function initNavDrag() {
       }, 350);
     }, {passive:true});
 
+    let navScrollRaf = null, navTouchX = 0;
+
+    function navScrollLoop() {
+      const navRect = nav.getBoundingClientRect();
+      const zone = 60, speed = 7;
+      const relX = navTouchX - navRect.left;
+      if (relX < zone) {
+        nav.scrollLeft -= Math.ceil((zone - relX) / zone * speed);
+        navScrollRaf = requestAnimationFrame(navScrollLoop);
+      } else if (relX > navRect.width - zone) {
+        nav.scrollLeft += Math.ceil((relX - (navRect.width - zone)) / zone * speed);
+        navScrollRaf = requestAnimationFrame(navScrollLoop);
+      } else {
+        navScrollRaf = null;
+      }
+    }
+
     btn.addEventListener('touchmove', e => {
       const t = e.touches[0];
       const dx = Math.abs(t.clientX - touchStartX);
@@ -2034,6 +2051,7 @@ function initNavDrag() {
       }
       if (!touchClone || !dragActive) return;
       e.preventDefault();
+      navTouchX = t.clientX;
       touchClone.style.left = (t.clientX - touchOffX) + 'px';
       touchClone.style.display = 'none';
       const el2 = document.elementFromPoint(t.clientX, t.clientY);
@@ -2041,10 +2059,13 @@ function initNavDrag() {
       const target = el2 && el2.classList.contains('nav-tab') ? el2 : null;
       nav.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('tab-drag-over'));
       if (target && target !== btn) target.classList.add('tab-drag-over');
+      // Kick off horizontal auto-scroll loop
+      if (!navScrollRaf) navScrollRaf = requestAnimationFrame(navScrollLoop);
     }, {passive:false});
 
     btn.addEventListener('touchend', e => {
       clearTimeout(longPressTimer); longPressTimer = null;
+      if (navScrollRaf) { cancelAnimationFrame(navScrollRaf); navScrollRaf = null; }
       if (!touchClone || !dragActive) return;
       touchClone.remove(); touchClone = null;
       dragActive = false;
@@ -2062,6 +2083,7 @@ function initNavDrag() {
 
     btn.addEventListener('touchcancel', () => {
       clearTimeout(longPressTimer); longPressTimer = null;
+      if (navScrollRaf) { cancelAnimationFrame(navScrollRaf); navScrollRaf = null; }
       if (touchClone) { touchClone.remove(); touchClone = null; }
       dragActive = false;
       btn.classList.remove('tab-dragging');
