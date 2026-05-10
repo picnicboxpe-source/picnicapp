@@ -1548,23 +1548,9 @@ function getRutaById(id) {
 window.setOrderRoute = async function(orderId, rutaId) {
   try {
     await updateDoc(doc(db, 'orders', orderId), { route: rutaId || null });
+    // Re-open detail with updated data
     showToast(rutaId ? 'Ruta ' + rutaId + ' asignada' : 'Ruta removida');
   } catch(e) { showToast('Error al asignar ruta'); }
-};
-
-window.expandRoutePills = function(orderId) {
-  const container = document.getElementById('route-pills-' + orderId);
-  if (!container) return;
-  // Get current selected route
-  const order = orders.find(o => o.id === orderId);
-  const currentRoute = order ? order.route : null;
-  // Replace with all routes
-  container.innerHTML = RUTAS.map(r => `
-    <button class="route-pill-btn ${currentRoute===r.id?'selected':''}"
-      style="background:${r.bg};color:${r.color}"
-      onclick="setOrderRoute('${orderId}','${r.id}')">
-      ${r.name}
-    </button>`).join('');
 };
 
 function filterOrders() {
@@ -2025,7 +2011,7 @@ window.verHistorialCierres = async function() {
 
 // ── RUTA DE REPARTO ──
 window.verRuta = function() {
-  const ORIGEN = encodeURIComponent('Av. General Mendiburu 935, Miraflores, Lima');
+  const ORIGEN_STR = 'Av. General Mendiburu 935, Miraflores, Lima';
   const MAX_PARADAS = 9;
   const today = dayKey(new Date());
 
@@ -2045,72 +2031,70 @@ window.verRuta = function() {
     return;
   }
 
+  // Group by route
   const porRuta = {};
   candidatos.forEach(o => {
-    const key = o.route || '__sin_ruta__';
-    if (!porRuta[key]) porRuta[key] = [];
-    porRuta[key].push(o);
+    const k = o.route || '__sin__';
+    if (!porRuta[k]) porRuta[k] = [];
+    porRuta[k].push(o);
   });
 
-  const rutasDisponibles = Object.keys(porRuta);
+  const keys = Object.keys(porRuta);
 
-  if (rutasDisponibles.length === 1 && rutasDisponibles[0] === '__sin_ruta__') {
-    abrirMapaRuta(candidatos, ORIGEN, MAX_PARADAS);
+  // Single group or no routes — open directly
+  if (keys.length === 1) {
+    abrirMapaRuta(porRuta[keys[0]], ORIGEN_STR, MAX_PARADAS);
     return;
   }
 
-  const existing = document.getElementById('ruta-picker');
-  if (existing) existing.remove();
+  // Show picker
+  const old = document.getElementById('ruta-picker');
+  if (old) old.remove();
 
   const picker = document.createElement('div');
   picker.id = 'ruta-picker';
   picker.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--ink);border-radius:20px;padding:16px 18px;z-index:9999;min-width:260px;max-width:92vw;box-shadow:0 8px 32px rgba(0,0,0,.5)';
 
-  // Header
-  const header = document.createElement('div');
-  header.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.5);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center';
-  const headerTitle = document.createElement('span');
-  headerTitle.textContent = 'Seleccionar ruta';
-  const closeBtn = document.createElement('button');
-  closeBtn.textContent = '×';
-  closeBtn.style.cssText = 'background:none;border:none;color:rgba(255,255,255,.4);font-size:20px;cursor:pointer;line-height:1';
-  closeBtn.onclick = () => picker.remove();
-  header.appendChild(headerTitle);
-  header.appendChild(closeBtn);
-  picker.appendChild(header);
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.5);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center';
+  const sp = document.createElement('span');
+  sp.textContent = 'Seleccionar ruta';
+  const xb = document.createElement('button');
+  xb.textContent = '×';
+  xb.style.cssText = 'background:none;border:none;color:rgba(255,255,255,.5);font-size:20px;cursor:pointer;line-height:1';
+  xb.onclick = () => picker.remove();
+  hdr.appendChild(sp); hdr.appendChild(xb);
+  picker.appendChild(hdr);
 
-  rutasDisponibles.sort((a,b) => a === '__sin_ruta__' ? 1 : b === '__sin_ruta__' ? -1 : a.localeCompare(b));
+  keys.sort((a,b) => a === '__sin__' ? 1 : b === '__sin__' ? -1 : a.localeCompare(b));
 
-  rutasDisponibles.forEach(key => {
-    const pedidos = porRuta[key];
-    const ruta   = key !== '__sin_ruta__' ? getRutaById(key) : null;
+  keys.forEach(k => {
+    const pedidos = porRuta[k];
+    const ruta   = k !== '__sin__' ? getRutaById(k) : null;
     const nombre = ruta ? ruta.name : 'Sin ruta asignada';
-    const bg     = ruta ? ruta.bg   : 'rgba(255,255,255,.12)';
+    const bg     = ruta ? ruta.bg   : 'rgba(255,255,255,.1)';
     const color  = ruta ? ruta.color: 'rgba(255,255,255,.9)';
 
     const btn = document.createElement('button');
-    btn.style.cssText = 'display:flex;align-items:center;justify-content:space-between;width:100%;padding:11px 14px;margin-bottom:7px;border-radius:12px;border:none;cursor:pointer;font-family:Plus Jakarta Sans,sans-serif;font-size:13px;font-weight:600;background:' + bg + ';color:' + color;
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = nombre;
-    const countSpan = document.createElement('span');
-    countSpan.style.cssText = 'opacity:.65;font-size:12px;font-weight:500';
-    countSpan.textContent = pedidos.length + ' parada' + (pedidos.length !== 1 ? 's' : '') + '  →';
-    btn.appendChild(nameSpan);
-    btn.appendChild(countSpan);
-    btn.onclick = () => { picker.remove(); abrirMapaRuta(pedidos, ORIGEN, MAX_PARADAS); };
+    btn.style.cssText = 'display:flex;align-items:center;justify-content:space-between;width:100%;padding:11px 14px;margin-bottom:7px;border-radius:12px;border:none;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;background:'+bg+';color:'+color;
+    const ns = document.createElement('span'); ns.textContent = nombre;
+    const cs = document.createElement('span');
+    cs.style.cssText = 'opacity:.65;font-size:12px;font-weight:500';
+    cs.textContent = pedidos.length + ' parada' + (pedidos.length !== 1 ? 's' : '') + '  →';
+    btn.appendChild(ns); btn.appendChild(cs);
+    btn.onclick = () => { picker.remove(); abrirMapaRuta(pedidos, ORIGEN_STR, MAX_PARADAS); };
     picker.appendChild(btn);
   });
 
-  if (rutasDisponibles.length > 1) {
-    const sep = document.createElement('div');
-    sep.style.cssText = 'height:1px;background:rgba(255,255,255,.1);margin:4px 0 8px';
-    picker.appendChild(sep);
-    const allBtn = document.createElement('button');
-    allBtn.style.cssText = 'display:block;width:100%;padding:11px;background:var(--grass);border:none;border-radius:12px;color:white;font-family:Plus Jakarta Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer';
-    allBtn.textContent = 'Ver todas las rutas (' + candidatos.length + ' paradas)';
-    allBtn.onclick = () => { picker.remove(); abrirMapaRuta(candidatos, ORIGEN, MAX_PARADAS); };
-    picker.appendChild(allBtn);
-  }
+  // All button
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:rgba(255,255,255,.1);margin:2px 0 8px';
+  picker.appendChild(sep);
+  const allBtn = document.createElement('button');
+  allBtn.style.cssText = 'display:block;width:100%;padding:11px;background:var(--grass);border:none;border-radius:12px;color:white;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer';
+  allBtn.textContent = 'Ver todas (' + candidatos.length + ' paradas)';
+  allBtn.onclick = () => { picker.remove(); abrirMapaRuta(candidatos, ORIGEN_STR, MAX_PARADAS); };
+  picker.appendChild(allBtn);
 
   document.body.appendChild(picker);
   setTimeout(() => {
@@ -2120,8 +2104,7 @@ window.verRuta = function() {
   }, 100);
 };
 
-function abrirMapaRuta(pedidos, ORIGEN, MAX_PARADAS) {
-  // Sort top-to-bottom: by sortOrder asc, fallback to createdAt asc
+function abrirMapaRuta(pedidos, ORIGEN_STR, MAX_PARADAS) {
   const sorted = [...pedidos].sort((a, b) => {
     const sa = a.sortOrder ?? (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
     const sb = b.sortOrder ?? (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
@@ -2129,9 +2112,18 @@ function abrirMapaRuta(pedidos, ORIGEN, MAX_PARADAS) {
   });
   const paradas = sorted.slice(0, MAX_PARADAS);
   if (pedidos.length > MAX_PARADAS) showToast('Mostrando ' + MAX_PARADAS + ' de ' + pedidos.length + ' paradas');
-  const wps = paradas.map(o => encodeURIComponent(o.address.trim()));
-  window.open('https://www.google.com/maps/dir/' + ORIGEN + '/' + wps.join('/'), '_blank');
+  const stops = [ORIGEN_STR, ...paradas.map(o => o.address.trim())].filter(Boolean);
+  const url = 'https://www.google.com/maps/dir/' + stops.map(s => encodeURIComponent(s)).join('/');
+  window.open(url, '_blank');
 }
+
+// ── TABS ──
+window.setTab = function(tab, el) {
+  currentTab = tab;
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  render();
+};
 
 // ── NAV TAB DRAG TO REORDER ──
 // ── TAB ORDER PERSISTENCE ──
@@ -2743,20 +2735,13 @@ window.openDetail = function(id) {
         🗺 Ruta de reparto
         ${o.route ? `<button onclick="setOrderRoute('${id}',null)" style="font-size:11px;color:var(--ink3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">Quitar</button>` : ''}
       </div>
-      <div class="route-pills" id="route-pills-${id}">
-        ${RUTAS.slice(0, 3).map(r => `
+      <div class="route-pills">
+        ${RUTAS.map(r => `
           <button class="route-pill-btn ${o.route===r.id?'selected':''}"
             style="background:${r.bg};color:${r.color}"
             onclick="setOrderRoute('${id}','${r.id}')">
             ${r.name}
           </button>`).join('')}
-        ${o.route && !RUTAS.slice(0,3).find(r=>r.id===o.route) ? `
-          <button class="route-pill-btn selected"
-            style="background:${RUTAS.find(r=>r.id===o.route)?.bg};color:${RUTAS.find(r=>r.id===o.route)?.color}">
-            ${RUTAS.find(r=>r.id===o.route)?.name}
-          </button>` : ''}
-        <button class="route-pill-btn" style="background:var(--paper3);color:var(--ink2)"
-          onclick="expandRoutePills('${id}')">＋</button>
       </div>
     </div>
 
