@@ -233,6 +233,22 @@ main { padding:20px; max-width:680px; margin:0 auto; }
 .order-card:hover { box-shadow:0 4px 20px rgba(26,18,8,0.1); transform:translateY(-1px); border-color:var(--border2); }
 .order-card.sorting-active { opacity:0.35; transform:scale(0.99); box-shadow:none !important; z-index:0; }
 .sorting-in-progress .order-card { transition:none !important; transform:none !important; }
+.route-label {
+  display:inline-flex; align-items:center;
+  font-size:10px; font-weight:700; letter-spacing:.3px;
+  padding:2px 9px; border-radius:100px;
+  white-space:nowrap; flex-shrink:0;
+}
+.route-pills { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.route-pill-btn {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:6px 14px; border-radius:100px;
+  border:2px solid transparent; cursor:pointer;
+  font-family:'Plus Jakarta Sans',sans-serif;
+  font-size:12px; font-weight:600; transition:all .15s;
+}
+.route-pill-btn.selected { border-color:var(--ink); }
+.route-pill-btn:hover { opacity:.85; }
 .order-card.sort-target  { border:2px dashed var(--grass) !important; background:var(--grass-ll) !important; }
 .order-card[draggable="true"] { cursor:default; }
 .sort-ghost {
@@ -449,7 +465,6 @@ main { padding:20px; max-width:680px; margin:0 auto; }
 
   <nav class="app-nav" id="app-nav">
     <button class="nav-tab active" onclick="setTab('todos',this)">Todos</button>
-    <button class="nav-tab" onclick="setTab('semana',this)">Esta semana</button>
     <button class="nav-tab" onclick="setTab('entregado',this)">Entregados</button>
     <button class="nav-tab" onclick="setTab('finanzas',this)">💰 Finanzas</button>
     <button class="nav-tab" onclick="setTab('balance',this)">📊 Balance</button>
@@ -798,9 +813,11 @@ function render() {
 
       // Touch sort — attach to drag handle only
 
+      const _ruta = o.route ? getRutaById(o.route) : null;
       card.innerHTML = `
         <div class="card-row1">
           <div class="client-name" style="flex:1">${o.clientName||'Cliente'}</div>
+          ${_ruta ? `<span class="route-label" style="background:${_ruta.bg};color:${_ruta.color}">${_ruta.name}</span>` : ''}
           <span class="drag-handle" id="dh-${o.id}" style="margin:0 8px">⠿</span>
           <span class="status-pill pill-${o.status||'pendiente'}">${labelStatus(o.status)}</span>
         </div>
@@ -1485,6 +1502,56 @@ function initInsumosDrag(container) {
     }, {passive:true});
   });
 }
+
+// ── ETIQUETAS DE RUTA ──
+const RUTAS = (() => {
+  const colors = [
+    ['#D4EAD9','#1E6B3A'], // A verde
+    ['#E3EDF8','#1A4A80'], // B azul
+    ['#EDE8F5','#4A2A7A'], // C morado
+    ['#FDF0D5','#7A5000'], // D dorado
+    ['#FAEAE9','#7A2020'], // E rojo
+    ['#E8F5F5','#1A5050'], // F teal
+    ['#FFF0E8','#7A3A00'], // G naranja
+    ['#F5E8F5','#5A1A5A'], // H rosa oscuro
+    ['#E8EEF5','#1A3050'], // I azul marino
+    ['#F5F5E8','#4A4A00'], // J oliva
+    ['#F5E8E8','#5A0000'], // K rojo oscuro
+    ['#E8F5E8','#005A00'], // L verde oscuro
+    ['#EEE8F5','#3A005A'], // M índigo
+    ['#F5EEE8','#5A3A00'], // N marrón
+    ['#E8F5F0','#005A3A'], // O esmeralda
+    ['#F0F5E8','#3A5A00'], // P lima
+    ['#F5E8F0','#5A003A'], // Q rosa
+    ['#E8F0F5','#003A5A'], // R celeste
+    ['#F5F0E8','#5A4A00'], // S arena
+    ['#EAE8F5','#1A005A'], // T violeta
+    ['#E8F5FA','#00405A'], // U azul claro
+    ['#FAF0E8','#5A3000'], // V terracota
+    ['#F5FAE8','#2A5A00'], // W verde claro
+    ['#F5E8FA','#4A0050'], // X magenta
+    ['#E8FAF5','#005040'], // Y menta
+    ['#FAF5E8','#504000'], // Z ocre
+  ];
+  return 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((l,i) => ({
+    id: l,
+    name: 'Ruta ' + l,
+    bg: colors[i][0],
+    color: colors[i][1],
+  }));
+})();
+
+function getRutaById(id) {
+  return RUTAS.find(r => r.id === id) || null;
+}
+
+window.setOrderRoute = async function(orderId, rutaId) {
+  try {
+    await updateDoc(doc(db, 'orders', orderId), { route: rutaId || null });
+    // Re-open detail with updated data
+    showToast(rutaId ? 'Ruta ' + rutaId + ' asignada' : 'Ruta removida');
+  } catch(e) { showToast('Error al asignar ruta'); }
+};
 
 function filterOrders() {
   const today = dayKey(new Date());
@@ -2598,6 +2665,21 @@ window.openDetail = function(id) {
       <div class="detail-section-title">Estado del pedido</div>
       <div class="status-selector">
         ${statusOptions.map(s=>`<button class="status-opt ${o.status===s?'active-'+s:''}" onclick="changeStatus('${id}','${s}',this)">${labelStatus(s)}</button>`).join('')}
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title" style="display:flex;align-items:center;justify-content:space-between">
+        🗺 Ruta de reparto
+        ${o.route ? `<button onclick="setOrderRoute('${id}',null)" style="font-size:11px;color:var(--ink3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">Quitar</button>` : ''}
+      </div>
+      <div class="route-pills">
+        ${RUTAS.map(r => `
+          <button class="route-pill-btn ${o.route===r.id?'selected':''}"
+            style="background:${r.bg};color:${r.color}"
+            onclick="setOrderRoute('${id}','${r.id}')">
+            ${r.name}
+          </button>`).join('')}
       </div>
     </div>
 
