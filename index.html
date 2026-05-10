@@ -1548,9 +1548,23 @@ function getRutaById(id) {
 window.setOrderRoute = async function(orderId, rutaId) {
   try {
     await updateDoc(doc(db, 'orders', orderId), { route: rutaId || null });
-    // Re-open detail with updated data
     showToast(rutaId ? 'Ruta ' + rutaId + ' asignada' : 'Ruta removida');
   } catch(e) { showToast('Error al asignar ruta'); }
+};
+
+window.expandRoutePills = function(orderId) {
+  const container = document.getElementById('route-pills-' + orderId);
+  if (!container) return;
+  // Get current selected route
+  const order = orders.find(o => o.id === orderId);
+  const currentRoute = order ? order.route : null;
+  // Replace with all routes
+  container.innerHTML = RUTAS.map(r => `
+    <button class="route-pill-btn ${currentRoute===r.id?'selected':''}"
+      style="background:${r.bg};color:${r.color}"
+      onclick="setOrderRoute('${orderId}','${r.id}')">
+      ${r.name}
+    </button>`).join('');
 };
 
 function filterOrders() {
@@ -2729,13 +2743,20 @@ window.openDetail = function(id) {
         🗺 Ruta de reparto
         ${o.route ? `<button onclick="setOrderRoute('${id}',null)" style="font-size:11px;color:var(--ink3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">Quitar</button>` : ''}
       </div>
-      <div class="route-pills">
-        ${RUTAS.map(r => `
+      <div class="route-pills" id="route-pills-${id}">
+        ${RUTAS.slice(0, 3).map(r => `
           <button class="route-pill-btn ${o.route===r.id?'selected':''}"
             style="background:${r.bg};color:${r.color}"
             onclick="setOrderRoute('${id}','${r.id}')">
             ${r.name}
           </button>`).join('')}
+        ${o.route && !RUTAS.slice(0,3).find(r=>r.id===o.route) ? `
+          <button class="route-pill-btn selected"
+            style="background:${RUTAS.find(r=>r.id===o.route)?.bg};color:${RUTAS.find(r=>r.id===o.route)?.color}">
+            ${RUTAS.find(r=>r.id===o.route)?.name}
+          </button>` : ''}
+        <button class="route-pill-btn" style="background:var(--paper3);color:var(--ink2)"
+          onclick="expandRoutePills('${id}')">＋</button>
       </div>
     </div>
 
