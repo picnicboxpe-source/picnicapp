@@ -1545,6 +1545,17 @@ function getRutaById(id) {
   return RUTAS.find(r => r.id === id) || null;
 }
 
+window.expandRoutePills = function(orderId, currentRoute) {
+  const container = document.getElementById('rpills-' + orderId);
+  if (!container) return;
+  container.innerHTML = RUTAS.map(r => `
+    <button class="route-pill-btn ${currentRoute===r.id?'selected':''}"
+      style="background:${r.bg};color:${r.color}"
+      onclick="setOrderRoute('${orderId}','${r.id}')">
+      ${r.name}
+    </button>`).join('');
+};
+
 window.setOrderRoute = async function(orderId, rutaId) {
   try {
     await updateDoc(doc(db, 'orders', orderId), { route: rutaId || null });
@@ -2114,7 +2125,14 @@ function abrirMapaRuta(pedidos, ORIGEN_STR, MAX_PARADAS) {
   if (pedidos.length > MAX_PARADAS) showToast('Mostrando ' + MAX_PARADAS + ' de ' + pedidos.length + ' paradas');
   const stops = [ORIGEN_STR, ...paradas.map(o => o.address.trim())].filter(Boolean);
   const url = 'https://www.google.com/maps/dir/' + stops.map(s => encodeURIComponent(s)).join('/');
-  window.open(url, '_blank');
+  // Use anchor click instead of window.open to avoid popup blocker on mobile
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 // ── TABS ──
@@ -2735,13 +2753,20 @@ window.openDetail = function(id) {
         🗺 Ruta de reparto
         ${o.route ? `<button onclick="setOrderRoute('${id}',null)" style="font-size:11px;color:var(--ink3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">Quitar</button>` : ''}
       </div>
-      <div class="route-pills">
-        ${RUTAS.map(r => `
+      <div class="route-pills" id="rpills-${id}">
+        ${RUTAS.slice(0, 3).map(r => `
           <button class="route-pill-btn ${o.route===r.id?'selected':''}"
             style="background:${r.bg};color:${r.color}"
             onclick="setOrderRoute('${id}','${r.id}')">
             ${r.name}
           </button>`).join('')}
+        ${o.route && !['A','B','C'].includes(o.route) ? `
+          <button class="route-pill-btn selected"
+            style="background:${RUTAS.find(r=>r.id===o.route)?.bg};color:${RUTAS.find(r=>r.id===o.route)?.color}">
+            ${RUTAS.find(r=>r.id===o.route)?.name}
+          </button>` : ''}
+        <button class="route-pill-btn" style="background:var(--paper3);color:var(--ink);font-size:16px;padding:4px 12px"
+          onclick="expandRoutePills('${id}','${o.route||''}')">＋</button>
       </div>
     </div>
 
@@ -2761,11 +2786,6 @@ window.openDetail = function(id) {
       </div>
     </div>
 
-    ${o.precio?`<div class="detail-section">
-      <div class="detail-section-title">💵 Total</div>
-      <div style="font-family:'Playfair Display',serif;font-size:26px;color:var(--grass)">S/ ${parseFloat(o.precio).toFixed(2)}</div>
-    </div>`:''}
-
     <div class="detail-section">
       <div class="detail-section-title">🚚 Entrega</div>
       <div class="detail-grid">
@@ -2779,6 +2799,11 @@ window.openDetail = function(id) {
     ${o.extras?`<div class="detail-section">
       <div class="detail-section-title">✨ Extras / Personalización</div>
       <div style="font-size:14px;color:var(--ink);line-height:1.7">${o.extras.replace(/·/g,'<br>·')}</div>
+    </div>`:''}
+
+    ${o.precio?`<div class="detail-section">
+      <div class="detail-section-title">💵 Total</div>
+      <div style="font-family:'Playfair Display',serif;font-size:26px;color:var(--grass)">S/ ${parseFloat(o.precio).toFixed(2)}</div>
     </div>`:''}
 
     ${o.cardMessage?`<div class="detail-section">
